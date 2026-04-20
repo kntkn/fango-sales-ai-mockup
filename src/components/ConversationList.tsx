@@ -87,9 +87,9 @@ function ScoreBadge({ score, trend }: { score: ScoreTier; trend?: 'up' | 'down' 
   const cfg = SCORE_CONFIG[score];
 
   const bgMap: Record<ScoreTier, string> = {
-    high: 'bg-[#10b98119]',
-    mid: 'bg-[#f59e0b19]',
-    low: 'bg-[#6b728019]',
+    high: 'bg-[#259d6319]',
+    mid: 'bg-[#b78f0019]',
+    low: 'bg-[#76767619]',
   };
   const textMap: Record<ScoreTier, string> = {
     high: 'text-score-high',
@@ -106,7 +106,7 @@ function ScoreBadge({ score, trend }: { score: ScoreTier; trend?: 'up' | 'down' 
 
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none ${bgMap[score]} ${textMap[score]}`}
+      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-bold leading-none ${bgMap[score]} ${textMap[score]}`}
     >
       {cfg.icon}&thinsp;{cfg.label}
       {trendEl}
@@ -165,11 +165,11 @@ function ConversationCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`flex w-full cursor-pointer items-start gap-2.5 px-3 py-2.5 text-left transition-colors ${borderCls}`}
+      className={`conv-card flex w-full cursor-pointer items-start gap-2.5 px-3 py-2.5 text-left ${borderCls}`}
       style={{ minHeight: 80 }}
     >
       {/* Avatar */}
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-semibold text-white">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-bold text-white">
         {initial}
       </div>
 
@@ -177,12 +177,12 @@ function ConversationCard({
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {/* Row 1: name + time + SLA */}
         <div className="flex items-center justify-between gap-1">
-          <span className="truncate text-sm font-semibold text-text-primary">
+          <span className="truncate text-sm font-bold text-text-primary">
             {customerName}
           </span>
           <div className="flex shrink-0 items-center gap-1">
             <SlaIndicator unansweredSince={unansweredSince} />
-            <span className="text-[11px] text-text-secondary">
+            <span className="text-xs text-text-secondary">
               {relativeTime(lastMessageTime)}
             </span>
           </div>
@@ -195,14 +195,14 @@ function ConversationCard({
         </div>
 
         {/* Row 3: area + property type tags */}
-        <div className="flex items-center gap-2 text-[11px] text-text-tertiary">
+        <div className="flex items-center gap-2 text-xs text-text-tertiary">
           <span>📍{area}</span>
           <span>🏠{propertyType}</span>
         </div>
 
         {/* Row 4: Nurture badge */}
         {conversation.nurtureRecommendation && conversation.stage !== 'deal' && (
-          <span className="nurture-pulse inline-flex items-center gap-0.5 text-[10px] text-score-mid bg-[#f59e0b19] rounded-full px-1.5 py-0.5 mt-0.5">
+          <span className="nurture-pulse inline-flex items-center gap-0.5 text-xs text-score-mid bg-[#b78f0019] rounded-full px-1.5 py-0.5 mt-0.5">
             ⏰ 追客
           </span>
         )}
@@ -293,7 +293,7 @@ export default function ConversationList({ conversations, selectedId, onSelect }
   }, [filtered, sort]);
 
   return (
-    <div className="flex h-full w-[260px] shrink-0 flex-col border-r border-border bg-bg">
+    <div className="flex h-full w-full flex-col bg-bg">
       {/* Search bar */}
       <div className="px-3 pt-3 pb-2">
         <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5">
@@ -315,7 +315,7 @@ export default function ConversationList({ conversations, selectedId, onSelect }
             key={f.key}
             type="button"
             onClick={() => setFilter(f.key)}
-            className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`rounded-full px-2.5 py-1 text-xs font-bold transition-colors ${
               filter === f.key
                 ? 'bg-primary text-white'
                 : 'bg-surface text-text-secondary hover:bg-border-light'
@@ -347,7 +347,7 @@ export default function ConversationList({ conversations, selectedId, onSelect }
           // Grouped by area
           areaGroups.map(([area, convs]) => (
             <div key={area}>
-              <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-xs font-medium text-text-secondary border-b border-border-light">
+              <div className="sticky top-0 z-10 bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary border-b border-border-light">
                 📍{area} ({convs.length})
               </div>
               <div className="divide-y divide-border-light">

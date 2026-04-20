@@ -19,6 +19,8 @@ interface Props {
   messages: Message[];
   aiSuggestion: AiSuggestion | null;
   smartReplies: SmartReply[];
+  onBack?: () => void;
+  onShowContext?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,7 +42,7 @@ function readStatusLabel(status?: string): string | null {
 
 function Stars({ count }: { count: number }) {
   return (
-    <span className="text-[10px] tracking-tight text-score-mid">
+    <span className="text-xs tracking-tight text-score-mid">
       {Array.from({ length: 5 }, (_, i) => (i < count ? '★' : '☆')).join('')}
     </span>
   );
@@ -49,26 +51,46 @@ function Stars({ count }: { count: number }) {
 // ---------------------------------------------------------------------------
 // Thread Header
 // ---------------------------------------------------------------------------
-function ThreadHeader({ conversation }: { conversation: Conversation }) {
+function ThreadHeader({
+  conversation,
+  onBack,
+  onShowContext,
+}: {
+  conversation: Conversation;
+  onBack?: () => void;
+  onShowContext?: () => void;
+}) {
   const score = SCORE_CONFIG[conversation.score];
   const trend = conversation.scoreTrend ? TREND_ICON[conversation.scoreTrend] : '';
   const conditionSummary = `${conversation.area} ${conversation.propertyType}`;
 
   return (
-    <div className="h-14 shrink-0 border-b border-border flex items-center px-4 gap-3">
-      <span className="text-base font-semibold text-text-primary whitespace-nowrap">
+    <div className="h-14 shrink-0 border-b border-border flex items-center px-2 md:px-4 gap-2 md:gap-3">
+      {/* Back button (mobile only) */}
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="md:hidden w-11 h-11 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm shrink-0"
+          aria-label="戻る"
+        >
+          ←
+        </button>
+      )}
+
+      <span className="text-sm md:text-base font-bold text-text-primary whitespace-nowrap truncate">
         {conversation.customerName}
       </span>
       <span
-        className="text-xs font-bold px-1.5 py-0.5 rounded"
+        className="text-xs font-bold px-1.5 py-0.5 rounded shrink-0 hidden sm:inline"
         style={{ color: score.color, backgroundColor: `color-mix(in srgb, ${score.color} 15%, transparent)` }}
       >
         {score.icon}{score.label}{trend}
       </span>
-      <span className="text-sm text-text-secondary truncate">{conditionSummary}</span>
+      <span className="text-sm text-text-secondary truncate hidden md:inline">{conditionSummary}</span>
       <div className="flex-1" />
       <select
-        className="text-xs border border-border rounded-md px-2 py-1 bg-white text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+        className="text-xs border border-border rounded-md px-2 py-1 bg-white text-text-primary focus:outline-none focus:ring-1 focus:ring-accent hidden sm:block"
         defaultValue={conversation.stage}
         onChange={(e) => console.log('Stage changed:', e.target.value as FunnelStage)}
       >
@@ -76,8 +98,20 @@ function ThreadHeader({ conversation }: { conversation: Conversation }) {
           <option key={key} value={key}>{cfg.label}</option>
         ))}
       </select>
-      <button type="button" className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="電話">📞</button>
-      <button type="button" className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="メモ">📋</button>
+      <button type="button" className="w-11 h-11 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm shrink-0" aria-label="電話">📞</button>
+      <button type="button" className="w-11 h-11 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm shrink-0 hidden sm:flex" aria-label="メモ">📋</button>
+
+      {/* Context panel toggle (mobile + tablet) */}
+      {onShowContext && (
+        <button
+          type="button"
+          onClick={onShowContext}
+          className="xl:hidden w-11 h-11 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm shrink-0 border border-border"
+          aria-label="顧客情報"
+        >
+          👤
+        </button>
+      )}
     </div>
   );
 }
@@ -99,8 +133,8 @@ function MessageBubble({ message }: { message: Message }) {
   const isReadBlue = message.readStatus === 'read';
 
   return (
-    <div className={`flex ${isAgent ? 'justify-end' : 'justify-start'} px-4 py-1`}>
-      <div className={`max-w-[75%] flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
+    <div className={`msg-enter flex ${isAgent ? 'justify-end' : 'justify-start'} px-4 py-1`}>
+      <div className={`max-w-[85%] md:max-w-[75%] flex flex-col ${isAgent ? 'items-end' : 'items-start'}`}>
         <div
           className={`px-3.5 py-2.5 text-sm whitespace-pre-wrap ${
             isAgent
@@ -111,9 +145,9 @@ function MessageBubble({ message }: { message: Message }) {
           {message.text}
         </div>
         <div className="flex items-center gap-1 mt-0.5">
-          <span className="text-[11px] text-text-tertiary">{formatTime(message.timestamp)}</span>
+          <span className="text-xs text-text-tertiary">{formatTime(message.timestamp)}</span>
           {readLabel && (
-            <span className={`text-[11px] ${isReadBlue ? 'text-accent' : 'text-text-tertiary'}`}>
+            <span className={`text-xs ${isReadBlue ? 'text-accent' : 'text-text-tertiary'}`}>
               {readLabel}
             </span>
           )}
@@ -121,9 +155,9 @@ function MessageBubble({ message }: { message: Message }) {
 
         {/* Interpretation — surface the customer's real intent */}
         {message.sender === 'customer' && message.interpretation && (
-          <div className="interpretation-fade mt-1.5 bg-[#fef9c3] border border-[#fde68a] rounded-md px-2 py-1 flex items-start gap-1.5 text-[11px] leading-snug">
+          <div className="interpretation-fade mt-1.5 bg-[#fef9c3] border border-[#fde68a] rounded-md px-2 py-1 flex items-start gap-1.5 text-xs leading-snug">
             <span className="shrink-0 text-sm">🔍</span>
-            <span className="text-[#92400e] font-medium">{message.interpretation}</span>
+            <span className="text-[#92400e] font-bold">{message.interpretation}</span>
           </div>
         )}
       </div>
@@ -183,7 +217,7 @@ function RefineInput({
       />
       <button
         type="button"
-        className="shrink-0 bg-accent text-white text-[11px] font-medium rounded px-2 py-1 hover:opacity-90"
+        className="shrink-0 bg-accent text-white text-xs font-bold rounded px-2 py-1 hover:bg-accent-hover"
         onClick={() => { onSubmit(value); setValue(''); }}
       >
         {buttonLabel}
@@ -214,14 +248,14 @@ function AiSuggestionZone({ suggestion }: { suggestion: AiSuggestion }) {
           className="w-full flex items-center gap-2 bg-ai-surface border border-ai-border rounded-lg px-3 py-2 text-left hover:bg-[#dcfce7] transition-colors"
           onClick={() => setExpanded(true)}
         >
-          <span className="text-[11px] font-medium text-ai-text bg-white/70 rounded-full px-1.5 py-0.5 shrink-0">
+          <span className="text-xs font-bold text-ai-text bg-white/70 rounded-full px-1.5 py-0.5 shrink-0">
             {modeConfig.icon}
           </span>
           <span className="text-xs text-text-primary truncate flex-1">{firstLine}</span>
           {props.length > 0 && (
-            <span className="text-[10px] text-text-tertiary shrink-0">+{props.length}物件</span>
+            <span className="text-xs text-text-tertiary shrink-0">+{props.length}物件</span>
           )}
-          <span className="text-[10px] text-accent shrink-0">展開</span>
+          <span className="text-xs text-accent shrink-0">展開</span>
         </button>
       )}
 
@@ -230,10 +264,10 @@ function AiSuggestionZone({ suggestion }: { suggestion: AiSuggestion }) {
         <div className="bg-ai-surface border border-ai-border rounded-lg p-2.5">
           {/* Header row */}
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-medium text-ai-text bg-white/70 rounded-full px-1.5 py-0.5">
+            <span className="text-xs font-bold text-ai-text bg-white/70 rounded-full px-1.5 py-0.5">
               {modeConfig.icon} {modeConfig.label}
             </span>
-            <button type="button" className="text-[10px] text-text-tertiary hover:text-text-secondary" onClick={() => { setExpanded(false); setRefining('none'); }}>
+            <button type="button" className="text-xs text-text-tertiary hover:text-text-secondary" onClick={() => { setExpanded(false); setRefining('none'); }}>
               折りたたむ
             </button>
           </div>
@@ -245,9 +279,9 @@ function AiSuggestionZone({ suggestion }: { suggestion: AiSuggestion }) {
 
           {/* Message actions */}
           <div className="flex items-center gap-1.5 mb-2">
-            <button type="button" className="bg-accent text-white rounded px-2 py-0.5 text-[11px] font-medium hover:opacity-90" onClick={() => console.log('Adopt')}>採用</button>
-            <button type="button" className="border border-border rounded px-2 py-0.5 text-[11px] text-text-secondary hover:bg-surface" onClick={() => setRefining(refining === 'message' ? 'none' : 'message')}>修正...</button>
-            <button type="button" className="text-[11px] text-text-tertiary hover:text-text-secondary" onClick={() => console.log('Dismiss')}>却下</button>
+            <button type="button" className="bg-accent text-white rounded px-2 py-0.5 text-xs font-bold hover:bg-accent-hover" onClick={() => console.log('Adopt')}>採用</button>
+            <button type="button" className="border border-border rounded px-2 py-0.5 text-xs text-text-secondary hover:bg-surface" onClick={() => setRefining(refining === 'message' ? 'none' : 'message')}>修正...</button>
+            <button type="button" className="text-xs text-text-tertiary hover:text-text-secondary" onClick={() => console.log('Dismiss')}>却下</button>
           </div>
 
           {refining === 'message' && (
@@ -259,13 +293,13 @@ function AiSuggestionZone({ suggestion }: { suggestion: AiSuggestion }) {
             <>
               <div className="border-t border-ai-border/50 my-2" />
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10px] text-text-tertiary shrink-0">物件:</span>
+                <span className="text-xs text-text-tertiary shrink-0">物件:</span>
                 {props.map((p) => (
-                  <span key={p.id} className="inline-flex items-center gap-1 bg-white/60 rounded px-1.5 py-0.5 text-[11px] text-text-primary">
+                  <span key={p.id} className="inline-flex items-center gap-1 bg-white/60 rounded px-1.5 py-0.5 text-xs text-text-primary">
                     {p.name} <span className="text-text-tertiary">{p.rent}</span>
                   </span>
                 ))}
-                <button type="button" className="text-[11px] text-accent hover:underline" onClick={() => setRefining(refining === 'property' ? 'none' : 'property')}>変更...</button>
+                <button type="button" className="text-xs text-accent hover:underline" onClick={() => setRefining(refining === 'property' ? 'none' : 'property')}>変更...</button>
               </div>
 
               {refining === 'property' && (
@@ -276,11 +310,11 @@ function AiSuggestionZone({ suggestion }: { suggestion: AiSuggestion }) {
 
           {/* Reasoning */}
           <div className="mt-1.5">
-            <button type="button" className="text-[10px] text-accent hover:underline" onClick={() => setShowReasoning(!showReasoning)}>
+            <button type="button" className="text-xs text-accent hover:underline" onClick={() => setShowReasoning(!showReasoning)}>
               {showReasoning ? '▾ 根拠' : '▸ 根拠'}
             </button>
             {showReasoning && (
-              <p className="text-[11px] text-text-secondary mt-1 leading-relaxed bg-white/50 rounded p-1.5">{suggestion.reasoning}</p>
+              <p className="text-xs text-text-secondary mt-1 leading-relaxed bg-white/50 rounded p-1.5">{suggestion.reasoning}</p>
             )}
           </div>
         </div>
@@ -322,13 +356,14 @@ function MessageComposer() {
       />
       <div className="flex items-center justify-between mt-2">
         <div className="flex items-center gap-1">
-          <button type="button" className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="ファイル添付">📎</button>
-          <button type="button" className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="画像添付">📷</button>
-          <button type="button" className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="物件挿入">🏠</button>
+          <button type="button" className="w-11 h-11 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="ファイル添付">📎</button>
+          <button type="button" className="w-11 h-11 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="画像添付">📷</button>
+          <button type="button" className="w-11 h-11 flex items-center justify-center rounded-md hover:bg-surface transition-colors text-sm" aria-label="物件挿入">🏠</button>
         </div>
         <button
           type="button"
-          className="bg-primary text-white rounded-lg px-4 py-1.5 text-xs font-medium flex items-center gap-1 hover:opacity-90 transition-opacity"
+          className="bg-primary text-white rounded-lg px-4 py-1.5 text-xs font-bold flex items-center gap-1 hover:bg-primary-hover hover:shadow-[var(--shadow-1)] transition-[background-color,box-shadow] duration-150"
+          style={{ transitionTimingFunction: 'var(--ease-out)' }}
           onClick={() => console.log('Send:', textareaRef.current?.value)}
         >
           送信 ⏎
@@ -346,6 +381,8 @@ export default function ChatThread({
   messages,
   aiSuggestion,
   smartReplies,
+  onBack,
+  onShowContext,
 }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -354,8 +391,8 @@ export default function ChatThread({
   }, [messages]);
 
   return (
-    <div className="flex flex-col h-full">
-      <ThreadHeader conversation={conversation} />
+    <div className="flex flex-col h-full w-full min-w-0">
+      <ThreadHeader conversation={conversation} onBack={onBack} onShowContext={onShowContext} />
       <div className="flex-1 overflow-y-auto py-3">
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />

@@ -47,7 +47,7 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <div className="text-sm font-medium text-text-primary">本日のスケジュール</div>
+        <div className="text-sm font-bold text-text-primary">本日のスケジュール</div>
         <div className="flex items-center gap-3 text-xs text-text-secondary">
           <span>{todaySummary.total}件</span>
           <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-accent" /> 確定 {todaySummary.confirmed}</span>
@@ -55,12 +55,13 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
         </div>
       </div>
 
-      <div className="border border-border rounded-lg overflow-hidden bg-white">
+      <div className="border border-border rounded-lg overflow-x-auto bg-white">
+        <div className="min-w-[500px]">
         {/* Agent header row */}
-        <div className="flex border-b border-border bg-surface">
+        <div className="flex border-b-2 border-black bg-[#f2f2f2]">
           <div className="w-[56px] shrink-0" />
           {agents.map((agent) => (
-            <div key={agent.id} className="flex-1 text-center py-2 text-xs font-medium text-text-primary border-l border-border">
+            <div key={agent.id} className="flex-1 text-center py-2 text-xs font-bold text-text-primary border-l border-border">
               {agent.name}
             </div>
           ))}
@@ -73,7 +74,7 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
             {HOURS.map((h) => (
               <div
                 key={h}
-                className="absolute left-0 right-0 text-right pr-2 text-[11px] text-text-tertiary"
+                className="absolute left-0 right-0 text-right pr-2 text-xs text-text-tertiary"
                 style={{ top: (h - 9) * HOUR_HEIGHT - 7 }}
               >
                 {h}:00
@@ -106,7 +107,7 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
                   return (
                     <div
                       key={s.id}
-                      className={`absolute left-1 right-1 rounded-md px-2 py-1.5 cursor-pointer transition-opacity hover:opacity-80 ${
+                      className={`absolute left-1 right-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors hover:brightness-95 ${
                         isConfirmed
                           ? 'bg-accent/10 border border-accent/30'
                           : 'bg-score-mid/10 border border-score-mid/30'
@@ -114,9 +115,9 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
                       style={{ top, height: Math.max(height, 36) }}
                       onClick={() => console.log('Open viewing:', s.customerName)}
                     >
-                      <div className="text-xs font-medium text-text-primary truncate">{s.customerName}</div>
-                      <div className="text-[10px] text-text-secondary truncate">{s.area} {s.property}</div>
-                      <div className={`text-[10px] font-medium ${isConfirmed ? 'text-accent' : 'text-score-mid'}`}>
+                      <div className="text-xs font-bold text-text-primary truncate">{s.customerName}</div>
+                      <div className="text-xs text-text-secondary truncate">{s.area} {s.property}</div>
+                      <div className={`text-xs font-bold ${isConfirmed ? 'text-accent' : 'text-score-mid'}`}>
                         {isConfirmed ? '確定' : '調整中'}
                       </div>
                     </div>
@@ -125,6 +126,7 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
               </div>
             );
           })}
+        </div>
         </div>
       </div>
     </div>
@@ -155,26 +157,26 @@ function TwoWeekCalendar({ agents, slots }: { agents: SalesAgent[]; slots: Viewi
 
   return (
     <div>
-      <div className="text-sm font-medium text-text-primary mb-3">2週間カレンダー</div>
+      <div className="text-sm font-bold text-text-primary mb-3">2週間カレンダー</div>
 
       <div className="border border-border rounded-lg overflow-hidden bg-white">
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[700px]">
             <thead>
-              <tr className="bg-surface">
-                <th className="text-left px-3 py-2 text-text-secondary font-medium w-[72px]">担当</th>
+              <tr className="bg-[#f2f2f2] border-b-2 border-black">
+                <th className="text-left px-3 py-2 text-text-secondary font-bold w-[72px]">担当</th>
                 {days.map((d, i) => {
                   const isToday = i === 0;
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                   return (
                     <th
                       key={i}
-                      className={`text-center px-1 py-2 font-medium ${
+                      className={`text-center px-1 py-2 font-bold ${
                         isToday ? 'text-accent bg-accent/5' : isWeekend ? 'text-text-tertiary' : 'text-text-secondary'
                       }`}
                     >
                       <div>{d.getDate()}</div>
-                      <div className="text-[10px]">{DAY_LABELS[d.getDay()]}</div>
+                      <div className="text-xs">{DAY_LABELS[d.getDay()]}</div>
                     </th>
                   );
                 })}
@@ -183,7 +185,7 @@ function TwoWeekCalendar({ agents, slots }: { agents: SalesAgent[]; slots: Viewi
             <tbody className="divide-y divide-border-light">
               {agents.map((agent) => (
                 <tr key={agent.id}>
-                  <td className="px-3 py-2.5 text-text-primary font-medium">{agent.name}</td>
+                  <td className="px-3 py-2.5 text-text-primary font-bold">{agent.name}</td>
                   {days.map((d, i) => {
                     const { confirmed, pending } = getCounts(agent.id, d);
                     const isToday = i === 0;
@@ -211,7 +213,7 @@ function TwoWeekCalendar({ agents, slots }: { agents: SalesAgent[]; slots: Viewi
         </div>
       </div>
 
-      <div className="flex items-center gap-4 mt-2 text-[11px] text-text-tertiary">
+      <div className="flex items-center gap-4 mt-2 text-xs text-text-tertiary">
         <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-accent" /> 確定</span>
         <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full border border-score-mid" /> 調整中</span>
       </div>
@@ -226,7 +228,7 @@ function TwoWeekCalendar({ agents, slots }: { agents: SalesAgent[]; slots: Viewi
 export default function ViewingCalendarView({ agents, viewingSlots }: Props) {
   return (
     <div className="flex flex-col h-full overflow-auto">
-      <div className="px-6 py-4 flex flex-col gap-6">
+      <div className="px-3 md:px-6 py-3 md:py-4 flex flex-col gap-6">
         <TodayTimeline agents={agents} slots={viewingSlots} />
         <TwoWeekCalendar agents={agents} slots={viewingSlots} />
       </div>

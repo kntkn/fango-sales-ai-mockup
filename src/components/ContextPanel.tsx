@@ -19,6 +19,7 @@ interface ContextPanelProps {
   properties: Property[];
   personality?: PersonalityAnalysis;
   suggestedReactions?: SuggestedReaction[];
+  onClose?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ const SENSITIVITY_STYLE: Record<string, string> = {
 function PersonalitySection({ personality }: { personality: PersonalityAnalysis }) {
   return (
     <section>
-      <div className="flex items-center gap-2 mb-2 text-sm font-medium text-text-primary">
+      <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
         <span>🧠</span>
         <span>パーソナリティ</span>
       </div>
@@ -67,14 +68,14 @@ function PersonalitySection({ personality }: { personality: PersonalityAnalysis 
       {/* Compact card */}
       <div className="bg-ai-surface rounded-lg p-2.5 space-y-2">
         {/* Type badge */}
-        <div className="text-xs font-semibold text-text-primary">{personality.estimatedType}</div>
+        <div className="text-xs font-bold text-text-primary">{personality.estimatedType}</div>
 
         {/* Sensitivities as inline chips */}
         <div className="flex flex-wrap gap-1">
           {personality.sensitivities.map((s) => (
             <span
               key={s.label}
-              className={`text-[10px] px-1.5 py-px rounded-full font-medium ${SENSITIVITY_STYLE[s.level]}`}
+              className={`text-xs px-1.5 py-px rounded-full font-bold ${SENSITIVITY_STYLE[s.level]}`}
             >
               {s.label}
             </span>
@@ -82,7 +83,7 @@ function PersonalitySection({ personality }: { personality: PersonalityAnalysis 
         </div>
 
         {/* Key-value grid */}
-        <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[11px]">
+        <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
           <span className="text-text-tertiary">対応</span>
           <span className="text-text-primary">{personality.communicationStyle.split('。')[0]}</span>
           <span className="text-text-tertiary">リズム</span>
@@ -92,7 +93,7 @@ function PersonalitySection({ personality }: { personality: PersonalityAnalysis 
         </div>
 
         {/* Timing recommendation */}
-        <div className="text-[11px] text-accent font-medium">{personality.lifeRhythm.recommendation}</div>
+        <div className="text-xs text-accent font-bold">{personality.lifeRhythm.recommendation}</div>
       </div>
     </section>
   );
@@ -118,11 +119,11 @@ function CustomerTab({
     <div className="flex flex-col gap-5">
       {/* Profile header */}
       <section className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center text-white text-lg font-semibold shrink-0">
+        <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center text-white text-lg font-bold shrink-0">
           {initial}
         </div>
         <div>
-          <p className="text-lg font-semibold text-text-primary leading-tight">{profile.name}</p>
+          <p className="text-lg font-bold text-text-primary leading-tight">{profile.name}</p>
           <p className="text-xs text-text-tertiary">{profile.lineId}</p>
         </div>
       </section>
@@ -133,7 +134,7 @@ function CustomerTab({
         <DetailRow
           label="流入元"
           value={
-            <span className="inline-block text-xs bg-surface rounded px-1.5 py-0.5 font-medium text-text-primary">
+            <span className="inline-block text-xs bg-surface rounded px-1.5 py-0.5 font-bold text-text-primary">
               {profile.source}
             </span>
           }
@@ -142,7 +143,7 @@ function CustomerTab({
         <DetailRow
           label="ステージ"
           value={
-            <span className="inline-block text-xs bg-accent/10 text-accent rounded px-1.5 py-0.5 font-medium">
+            <span className="inline-block text-xs bg-accent/10 text-accent rounded px-1.5 py-0.5 font-bold">
               {stageCfg.label}
             </span>
           }
@@ -154,7 +155,7 @@ function CustomerTab({
 
       {/* Requirements checklist */}
       <section>
-        <div className="flex items-center gap-2 mb-2 text-sm font-medium text-text-primary">
+        <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
           <span>🎯</span>
           <span>希望条件</span>
         </div>
@@ -163,7 +164,7 @@ function CustomerTab({
             <li key={req.label} className="flex items-start gap-2 text-sm">
               <span className="text-score-high shrink-0">✅</span>
               <span>
-                <span className="font-medium">{req.label}</span>
+                <span className="font-bold">{req.label}</span>
                 <span className="text-text-secondary">: {req.value}</span>
               </span>
             </li>
@@ -180,7 +181,7 @@ function CustomerTab({
 
       {/* Behavior timeline */}
       <section>
-        <div className="flex items-center gap-2 mb-2 text-sm font-medium text-text-primary">
+        <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
           <span>📊</span>
           <span>行動履歴</span>
         </div>
@@ -211,7 +212,7 @@ function PropertyCard({ property }: { property: Property }) {
       <div className="flex gap-3">
         <div className="w-[60px] h-[60px] rounded-lg bg-surface flex items-center justify-center text-2xl shrink-0">🏠</div>
         <div className="flex flex-col gap-0.5 min-w-0">
-          <p className="text-sm font-medium text-text-primary truncate">{property.name}</p>
+          <p className="text-sm font-bold text-text-primary truncate">{property.name}</p>
           <p className="text-xs text-text-secondary">{property.type} / {property.rent} / 徒歩{property.walkMinutes}分</p>
           <p className="text-xs text-text-secondary">{property.station}駅</p>
           <div className="flex items-center gap-1.5 mt-0.5">
@@ -250,7 +251,7 @@ function PropertyTab({
 
       {/* Candidate property cards */}
       <section>
-        <div className="flex items-center gap-2 mb-3 text-sm font-medium text-text-primary">
+        <div className="flex items-center gap-2 mb-3 text-sm font-bold text-text-primary">
           <span>🏠</span>
           <span>提案候補物件</span>
         </div>
@@ -263,7 +264,7 @@ function PropertyTab({
 
       {/* Past suggestions */}
       <section>
-        <div className="flex items-center gap-2 mb-2 text-sm font-medium text-text-primary">
+        <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
           <span>📌</span>
           <span>過去提案済み物件</span>
         </div>
@@ -281,7 +282,7 @@ function PropertyTab({
       {/* Suggested reactions */}
       {suggestedReactions && suggestedReactions.length > 0 && (
         <section>
-          <div className="flex items-center gap-2 mb-2 text-sm font-medium text-text-primary">
+          <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
             <span>📊</span>
             <span>提案への反応</span>
           </div>
@@ -296,10 +297,10 @@ function PropertyTab({
               return (
                 <div key={r.propertyName} className="flex items-center justify-between text-xs py-1.5 border-b border-border-light last:border-0">
                   <div className="flex flex-col">
-                    <span className="text-text-primary font-medium">{r.propertyName}</span>
-                    {r.comment && <span className="text-text-tertiary text-[11px]">{r.comment}</span>}
+                    <span className="text-text-primary font-bold">{r.propertyName}</span>
+                    {r.comment && <span className="text-text-tertiary text-xs">{r.comment}</span>}
                   </div>
-                  <span className={`font-medium ${reactionColor}`}>{reactionText}</span>
+                  <span className={`font-bold ${reactionColor}`}>{reactionText}</span>
                 </div>
               );
             })}
@@ -317,7 +318,7 @@ function BukakuButton() {
     <div>
       <button
         type="button"
-        className="w-full bg-white border border-accent text-accent hover:bg-ai-surface font-medium text-sm rounded-lg py-2 transition-colors"
+        className="w-full bg-white border border-accent text-accent hover:bg-ai-surface font-bold text-sm rounded-lg py-2 transition-colors"
         onClick={() => setShowForm(!showForm)}
       >
         空室確認(物確)
@@ -331,7 +332,7 @@ function BukakuButton() {
           />
           <button
             type="button"
-            className="shrink-0 bg-accent text-white text-xs font-medium rounded-lg px-3 py-1.5 hover:opacity-90 transition-opacity"
+            className="shrink-0 bg-accent text-white text-xs font-bold rounded-lg px-3 py-1.5 hover:bg-accent-hover transition-colors"
             onClick={() => console.log('Bukaku check started')}
           >
             確認
@@ -352,6 +353,7 @@ export default function ContextPanel({
   properties,
   personality,
   suggestedReactions,
+  onClose,
 }: ContextPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>('customer');
 
@@ -364,6 +366,17 @@ export default function ContextPanel({
     <div className="flex flex-col h-full bg-white">
       {/* Tab bar */}
       <div className="flex border-b border-border shrink-0">
+        {/* Close button (mobile + tablet) */}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="xl:hidden w-10 flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface transition-colors shrink-0 border-r border-border"
+            aria-label="閉じる"
+          >
+            ✕
+          </button>
+        )}
         {tabs.map((tab) => (
           <button
             key={tab.key}
@@ -371,7 +384,7 @@ export default function ContextPanel({
             onClick={() => setActiveTab(tab.key)}
             className={`flex-1 py-2.5 text-sm text-center transition-colors ${
               activeTab === tab.key
-                ? 'font-medium text-text-primary border-b-2 border-accent'
+                ? 'font-bold text-text-primary border-b-2 border-accent'
                 : 'text-text-secondary hover:text-text-primary'
             }`}
           >
@@ -383,14 +396,18 @@ export default function ContextPanel({
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'customer' && (
-          <CustomerTab profile={customerProfile} personality={personality} />
+          <div key="customer" className="tab-fade-enter">
+            <CustomerTab profile={customerProfile} personality={personality} />
+          </div>
         )}
         {activeTab === 'property' && (
-          <PropertyTab
-            properties={properties}
-            sourceProperty={customerProfile.sourceProperty}
-            suggestedReactions={suggestedReactions}
-          />
+          <div key="property" className="tab-fade-enter">
+            <PropertyTab
+              properties={properties}
+              sourceProperty={customerProfile.sourceProperty}
+              suggestedReactions={suggestedReactions}
+            />
+          </div>
         )}
       </div>
     </div>

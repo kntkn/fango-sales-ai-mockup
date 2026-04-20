@@ -31,11 +31,11 @@ const STAGE_ORDER: Record<FunnelStage, number> = {
 };
 
 const STAGE_COLORS: Record<FunnelStage, string> = {
-  initial: 'bg-[#6b728019] text-score-low',
-  hearing: 'bg-[#3b82f619] text-[#3b82f6]',
-  proposal: 'bg-[#f59e0b19] text-score-mid',
-  viewing: 'bg-[#10b98119] text-score-high',
-  deal: 'bg-[#8b5cf619] text-[#8b5cf6]',
+  initial: 'bg-[#76767619] text-score-low',
+  hearing: 'bg-[#264af419] text-[#264af4]',
+  proposal: 'bg-[#b78f0019] text-score-mid',
+  viewing: 'bg-[#259d6319] text-score-high',
+  deal: 'bg-[#6f23d019] text-[#6f23d0]',
 };
 
 // ---------------------------------------------------------------------------
@@ -65,9 +65,9 @@ function SortArrow({ active, dir }: { active: boolean; dir: SortDir }) {
 function ScoreBadge({ score }: { score: ScoreTier }) {
   const cfg = SCORE_CONFIG[score];
   const bgMap: Record<ScoreTier, string> = {
-    high: 'bg-[#10b98119]',
-    mid: 'bg-[#f59e0b19]',
-    low: 'bg-[#6b728019]',
+    high: 'bg-[#259d6319]',
+    mid: 'bg-[#b78f0019]',
+    low: 'bg-[#76767619]',
   };
   const textMap: Record<ScoreTier, string> = {
     high: 'text-score-high',
@@ -77,7 +77,7 @@ function ScoreBadge({ score }: { score: ScoreTier }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none ${bgMap[score]} ${textMap[score]}`}
+      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-bold leading-none ${bgMap[score]} ${textMap[score]}`}
     >
       {cfg.icon}&thinsp;{cfg.label}
     </span>
@@ -154,8 +154,8 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Summary stats */}
-      <div className="shrink-0 px-6 py-4 bg-surface border-b border-border">
-        <div className="flex items-center gap-6 flex-wrap">
+      <div className="shrink-0 px-3 md:px-6 py-3 md:py-4 bg-surface border-b border-border">
+        <div className="flex items-center gap-3 md:gap-6 flex-wrap">
           <div className="text-sm">
             <span className="text-text-secondary">総顧客数</span>{' '}
             <span className="font-bold text-text-primary text-lg">{totalCount}</span>
@@ -190,28 +190,28 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto px-6 py-4">
-        <div className="bg-white border border-border rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
+      <div className="flex-1 overflow-auto px-3 md:px-6 py-3 md:py-4">
+        <div className="bg-white border border-border rounded-lg overflow-x-auto">
+          <table className="w-full text-sm min-w-[800px]">
             <thead>
-              <tr className="bg-surface">
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-text-secondary w-[60px]">
+              <tr className="bg-[#f2f2f2] border-b-2 border-black">
+                <th className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary w-[60px]">
                   ID
                 </th>
                 {columns.map((col) => (
                   <th
                     key={col.key}
-                    className="text-left px-4 py-2.5 text-xs font-medium text-text-secondary cursor-pointer select-none hover:text-text-primary transition-colors"
+                    className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary cursor-pointer select-none hover:text-text-primary transition-colors"
                     onClick={() => handleSort(col.key)}
                   >
                     {col.label}
                     <SortArrow active={sortCol === col.key} dir={sortDir} />
                   </th>
                 ))}
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-text-secondary">
+                <th className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary">
                   経過時間
                 </th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium text-text-secondary">
+                <th className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary">
                   アクション
                 </th>
               </tr>
@@ -239,10 +239,10 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
                         onClick={() => onSelectConversation(c.id)}
                         className="flex items-center gap-2.5 group"
                       >
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-semibold text-white">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-bold text-white">
                           {initial}
                         </div>
-                        <span className="text-sm font-medium text-text-primary group-hover:text-accent transition-colors">
+                        <span className="text-sm font-bold text-text-primary group-hover:text-accent transition-colors">
                           {c.customerName}
                         </span>
                         {c.unread && (
@@ -253,7 +253,7 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
 
                     {/* Stage */}
                     <td className="px-4 py-3">
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${stageColor}`}>
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${stageColor}`}>
                         {stageCfg.label}
                       </span>
                     </td>
@@ -287,14 +287,14 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          className="px-2 py-1 rounded text-[11px] font-medium bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                          className="px-2 py-1 rounded text-xs font-bold bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
                           onClick={() => console.log('Call:', c.customerName)}
                         >
                           📞 電話
                         </button>
                         <button
                           type="button"
-                          className="px-2 py-1 rounded text-[11px] font-medium bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                          className="px-2 py-1 rounded text-xs font-bold bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
                           onClick={() => onSelectConversation(c.id)}
                         >
                           💬 チャット
