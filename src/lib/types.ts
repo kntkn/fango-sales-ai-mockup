@@ -1,9 +1,42 @@
 export type ScoreTier = 'high' | 'mid' | 'low';
-export type FunnelStage = 'initial' | 'hearing' | 'proposal' | 'viewing' | 'deal';
+
+export type RecommendStatus = 'idle' | 'searching' | 'complete' | 'error';
+
+export interface RecommendSearchResult {
+  reinsId: string;
+  predictedViews: number;
+  searchedAt: string;
+  rent?: string | null;
+  areaSqm?: string | null;
+  builtYear?: string | null;
+  walkMinutes?: string | null;
+  address?: string | null;
+  floorPlan?: string | null;
+  propertyType?: string | null;
+  deposit?: string | null;
+  keyMoney?: string | null;
+}
+
+export interface RecommendState {
+  status: RecommendStatus;
+  projectId: string | null;
+  results: RecommendSearchResult[];
+  error: string | null;
+}
+
+export type FunnelStage =
+  | 'initial'
+  | 'proposal_1'
+  | 'proposal_2'
+  | 'proposal_3'
+  | 'proposal_4plus'
+  | 'viewing'
+  | 'screening'
+  | 'deal';
 export type AiMode = 'pounce' | 'suggest' | 'expand' | 'tune' | 'nurture';
 export type MessageSender = 'customer' | 'agent' | 'system';
 export type ReadStatus = 'sent' | 'delivered' | 'read';
-export type ViewMode = 'chat' | 'crm' | 'calendar' | 'inquiries';
+export type ViewMode = 'chat' | 'crm' | 'calendar' | 'inquiries' | 'agents';
 
 export interface Conversation {
   id: string;
@@ -20,6 +53,11 @@ export interface Conversation {
   propertyType: string;
   unansweredSince?: Date;
   nurtureRecommendation?: string;
+  // LINE-sourced conversations carry both the raw LINE display name and an optional local alias
+  lineUserId?: string;
+  lineDisplayName?: string;
+  lineAliasName?: string;
+  assignedAgentId?: string;
 }
 
 export interface Message {
@@ -99,11 +137,9 @@ export interface PersonalityAnalysis {
 export interface Inquiry {
   id: string;
   customerName: string;
+  email: string;
+  phone: string;
   timestamp: Date;
-  property: string;
-  source: 'SUUMO' | "HOME'S" | 'at home' | string;
-  message?: string;
-  hasLine: boolean;
 }
 
 export interface SalesAgent {
@@ -137,9 +173,12 @@ export const SCORE_CONFIG: Record<ScoreTier, { label: string; color: string; ico
 
 export const STAGE_CONFIG: Record<FunnelStage, { label: string; labelShort: string }> = {
   initial: { label: '初回接触', labelShort: '初回' },
-  hearing: { label: 'ヒアリング', labelShort: '聴取' },
-  proposal: { label: '物件提案', labelShort: '提案' },
-  viewing: { label: '内見予約', labelShort: '内見' },
+  proposal_1: { label: '提案1回目', labelShort: '提案①' },
+  proposal_2: { label: '提案2回目', labelShort: '提案②' },
+  proposal_3: { label: '提案3回目', labelShort: '提案③' },
+  proposal_4plus: { label: '提案4回目以降', labelShort: '提案④+' },
+  viewing: { label: '内見', labelShort: '内見' },
+  screening: { label: '審査', labelShort: '審査' },
   deal: { label: '成約', labelShort: '成約' },
 };
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import type { Conversation, ScoreTier, FunnelStage } from '@/lib/types';
 import { SCORE_CONFIG, STAGE_CONFIG } from '@/lib/types';
 
@@ -11,6 +11,7 @@ import { SCORE_CONFIG, STAGE_CONFIG } from '@/lib/types';
 interface Props {
   conversations: Conversation[];
   onSelectConversation: (id: string) => void;
+  onRenameLine?: (lineUserId: string, aliasName: string | null) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -24,17 +25,23 @@ const SCORE_ORDER: Record<ScoreTier, number> = { high: 0, mid: 1, low: 2 };
 
 const STAGE_ORDER: Record<FunnelStage, number> = {
   initial: 0,
-  hearing: 1,
-  proposal: 2,
-  viewing: 3,
-  deal: 4,
+  proposal_1: 1,
+  proposal_2: 2,
+  proposal_3: 3,
+  proposal_4plus: 4,
+  viewing: 5,
+  screening: 6,
+  deal: 7,
 };
 
 const STAGE_COLORS: Record<FunnelStage, string> = {
   initial: 'bg-[#76767619] text-score-low',
-  hearing: 'bg-[#264af419] text-[#264af4]',
-  proposal: 'bg-[#b78f0019] text-score-mid',
+  proposal_1: 'bg-[#264af419] text-[#264af4]',
+  proposal_2: 'bg-[#264af419] text-[#264af4]',
+  proposal_3: 'bg-[#b78f0019] text-score-mid',
+  proposal_4plus: 'bg-[#b78f0019] text-score-mid',
   viewing: 'bg-[#259d6319] text-score-high',
+  screening: 'bg-[#6f23d019] text-[#6f23d0]',
   deal: 'bg-[#6f23d019] text-[#6f23d0]',
 };
 
@@ -85,10 +92,132 @@ function ScoreBadge({ score }: { score: ScoreTier }) {
 }
 
 // ---------------------------------------------------------------------------
+// NameCell — shows {alias}({displayName}) when renamed, with inline edit
+// ---------------------------------------------------------------------------
+
+function NameCell({
+  conversation,
+  onSelect,
+  onRenameLine,
+}: {
+  conversation: Conversation;
+  onSelect: () => void;
+  onRenameLine?: (lineUserId: string, aliasName: string | null) => Promise<void>;
+}) {
+  const { customerName, lineUserId, lineDisplayName, lineAliasName, unread } = conversation;
+  const initial = customerName.charAt(0);
+  const canRename = !!onRenameLine && !!lineUserId;
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(lineAliasName ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const showParen =
+    !!lineAliasName && !!lineDisplayName && lineAliasName !== lineDisplayName;
+
+  const submit = useCallback(async () => {
+    if (!onRenameLine || !lineUserId) return;
+    const trimmed = draft.trim();
+    const next = trimmed === '' ? null : trimmed;
+    const current = lineAliasName ?? null;
+    if (next === current) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onRenameLine(lineUserId, next);
+      setEditing(false);
+    } catch (err) {
+      console.error('rename failed', err);
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, lineAliasName, lineUserId, onRenameLine]);
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-bold text-white">
+          {initial}
+        </div>
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={lineDisplayName ?? '表示名'}
+          disabled={saving}
+          autoFocus
+          className="min-w-0 flex-1 border border-border rounded px-2 py-1 text-sm text-text-primary outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+        />
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => void submit()}
+          className="shrink-0 bg-accent text-white text-xs font-bold rounded px-2 py-1 hover:bg-accent-hover disabled:opacity-60"
+        >
+          {saving ? '保存中' : '保存'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="shrink-0 text-xs text-text-tertiary hover:text-text-secondary px-1"
+        >
+          キャンセル
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2.5">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex items-center gap-2.5 group min-w-0"
+      >
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-bold text-white">
+          {initial}
+        </div>
+        <span className="text-sm font-bold text-text-primary group-hover:text-accent transition-colors truncate">
+          {customerName}
+          {showParen && (
+            <span className="ml-1 font-normal text-text-tertiary">
+              ({lineDisplayName})
+            </span>
+          )}
+        </span>
+        {unread && (
+          <span className="inline-block h-2 w-2 rounded-full bg-accent shrink-0" />
+        )}
+      </button>
+      {canRename && (
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(lineAliasName ?? '');
+            setEditing(true);
+          }}
+          className="shrink-0 text-text-tertiary hover:text-text-secondary text-xs px-1"
+          aria-label="表示名を編集"
+          title="表示名を編集"
+        >
+          ✏️
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CrmView (default export)
 // ---------------------------------------------------------------------------
 
-export default function CrmView({ conversations, onSelectConversation }: Props) {
+export default function CrmView({ conversations, onSelectConversation, onRenameLine }: Props) {
   const [sortCol, setSortCol] = useState<SortColumn>('lastMessageTime');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -195,9 +324,6 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
           <table className="w-full text-sm min-w-[800px]">
             <thead>
               <tr className="bg-[#f2f2f2] border-b-2 border-black">
-                <th className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary w-[60px]">
-                  ID
-                </th>
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -218,7 +344,6 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
             </thead>
             <tbody className="divide-y divide-border-light">
               {sorted.map((c) => {
-                const initial = c.customerName.charAt(0);
                 const stageCfg = STAGE_CONFIG[c.stage];
                 const stageColor = STAGE_COLORS[c.stage];
 
@@ -227,28 +352,13 @@ export default function CrmView({ conversations, onSelectConversation }: Props) 
                     key={c.id}
                     className="hover:bg-surface transition-colors"
                   >
-                    {/* ID */}
-                    <td className="px-4 py-3">
-                      <span className="text-xs text-text-tertiary tabular-nums">C-{c.id.padStart(3, '0')}</span>
-                    </td>
-
                     {/* Customer name */}
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => onSelectConversation(c.id)}
-                        className="flex items-center gap-2.5 group"
-                      >
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-bold text-white">
-                          {initial}
-                        </div>
-                        <span className="text-sm font-bold text-text-primary group-hover:text-accent transition-colors">
-                          {c.customerName}
-                        </span>
-                        {c.unread && (
-                          <span className="inline-block h-2 w-2 rounded-full bg-accent shrink-0" />
-                        )}
-                      </button>
+                      <NameCell
+                        conversation={c}
+                        onSelect={() => onSelectConversation(c.id)}
+                        onRenameLine={onRenameLine}
+                      />
                     </td>
 
                     {/* Stage */}

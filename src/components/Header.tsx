@@ -10,8 +10,8 @@ interface Props {
 const TABS: { key: ViewMode; label: string }[] = [
   { key: 'chat', label: 'チャット' },
   { key: 'crm', label: '顧客リスト' },
-  { key: 'calendar', label: '内見カレンダー' },
   { key: 'inquiries', label: '反響リスト' },
+  { key: 'agents', label: '担当者リスト' },
 ];
 
 export default function Header({ viewMode, onViewModeChange }: Props) {

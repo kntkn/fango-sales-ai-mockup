@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type {
   Conversation,
   CustomerProfile,
@@ -8,10 +8,20 @@ import type {
   PersonalityAnalysis,
   SuggestedReaction,
   ScoreTier,
+  RecommendState,
 } from '@/lib/types';
-import { SCORE_CONFIG, STAGE_CONFIG } from '@/lib/types';
+import { STAGE_CONFIG } from '@/lib/types';
+import { useBukkaku } from '@/lib/use-bukkaku';
+import { useCallMemo } from '@/lib/use-call-memo';
+import BukkakuPipeline from './BukkakuPipeline';
 
 type Tab = 'customer' | 'property';
+
+interface EditableCustomer {
+  id: string;
+  email: string;
+  phone: string;
+}
 
 interface ContextPanelProps {
   conversation: Conversation;
@@ -20,6 +30,16 @@ interface ContextPanelProps {
   personality?: PersonalityAnalysis;
   suggestedReactions?: SuggestedReaction[];
   onClose?: () => void;
+  editableCustomer?: EditableCustomer;
+  onSaveContact?: (id: string, patch: { email?: string; phone?: string }) => Promise<void>;
+  recommend?: RecommendState;
+  hasMessages?: boolean;
+  onSearchRecommend?: () => void;
+  /**
+   * Called when the user clicks 「空室を帯替え」 in the bukkaku result card.
+   * The parent is expected to open the obikae overlay.
+   */
+  onStartObikae?: (vacancies: import('@/lib/types-bukkaku').BukkakuResult[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,12 +123,161 @@ function PersonalitySection({ personality }: { personality: PersonalityAnalysis 
 // Customer Tab
 // ---------------------------------------------------------------------------
 
+function ContactEditor({
+  customer,
+  onSave,
+}: {
+  customer: EditableCustomer;
+  onSave: (id: string, patch: { email?: string; phone?: string }) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [email, setEmail] = useState(customer.email);
+  const [phone, setPhone] = useState(customer.phone);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editing) {
+      setEmail(customer.email);
+      setPhone(customer.phone);
+    }
+  }, [customer.id, customer.email, customer.phone, editing]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(customer.id, { email, phone });
+      setEditing(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setEmail(customer.email);
+    setPhone(customer.phone);
+    setEditing(false);
+    setError(null);
+  };
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 text-sm font-bold text-text-primary">
+          <span>✉️</span>
+          <span>連絡先 (Notion同期)</span>
+        </div>
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="text-xs text-accent hover:text-accent-light transition-colors"
+          >
+            編集
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="flex flex-col gap-2 bg-ai-surface rounded-lg p-2.5">
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-text-secondary">Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="border border-border rounded px-2 py-1 text-xs text-text-primary bg-white outline-none focus:ring-1 focus:ring-accent"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs">
+            <span className="text-text-secondary">電話番号</span>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="border border-border rounded px-2 py-1 text-xs text-text-primary bg-white outline-none focus:ring-1 focus:ring-accent"
+            />
+          </label>
+          {error && <p className="text-xs text-urgent">{error}</p>}
+          <div className="flex gap-2 mt-1">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 bg-accent text-white text-xs font-bold rounded px-3 py-1.5 hover:bg-accent-hover disabled:opacity-50 transition-colors"
+            >
+              {saving ? '保存中…' : 'Notionに保存'}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={saving}
+              className="text-xs text-text-secondary hover:text-text-primary px-3 py-1.5"
+            >
+              キャンセル
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5 text-xs">
+          <DetailRow label="Email" value={customer.email || '-'} />
+          <DetailRow label="電話番号" value={customer.phone || '-'} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CallMemoSection({ conversationId }: { conversationId: string }) {
+  const { memo, savedAt } = useCallMemo(conversationId);
+  const hasMemo = memo.trim().length > 0;
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 text-sm font-bold text-text-primary">
+          <span>📞</span>
+          <span>電話メモ</span>
+        </div>
+        {savedAt && (
+          <span className="text-[10px] text-text-tertiary">
+            {new Date(savedAt).toLocaleString('ja-JP', {
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+        )}
+      </div>
+      {hasMemo ? (
+        <p className="text-xs text-text-primary whitespace-pre-wrap leading-relaxed bg-ai-surface rounded-lg p-2.5">
+          {memo}
+        </p>
+      ) : (
+        <p className="text-xs text-text-tertiary italic bg-surface rounded-lg p-2.5">
+          まだメモがありません。チャット画面の 📞 から入力できます。
+        </p>
+      )}
+    </section>
+  );
+}
+
 function CustomerTab({
+  conversationId,
   profile,
   personality,
+  editableCustomer,
+  onSaveContact,
 }: {
+  conversationId: string;
   profile: CustomerProfile;
   personality?: PersonalityAnalysis;
+  editableCustomer?: EditableCustomer;
+  onSaveContact?: (id: string, patch: { email?: string; phone?: string }) => Promise<void>;
 }) {
   const stageCfg = STAGE_CONFIG[profile.stage];
   const initial = profile.name.charAt(0);
@@ -149,6 +318,14 @@ function CustomerTab({
           }
         />
       </section>
+
+      {/* Contact editor (Notion sync) */}
+      {editableCustomer && onSaveContact && (
+        <ContactEditor customer={editableCustomer} onSave={onSaveContact} />
+      )}
+
+      {/* Call memo (read-only mirror of the phone popover in ChatThread) */}
+      <CallMemoSection conversationId={conversationId} />
 
       {/* Personality analysis */}
       {personality && <PersonalitySection personality={personality} />}
@@ -230,24 +407,275 @@ function PropertyCard({ property }: { property: Property }) {
   );
 }
 
+function PropertyRecommendation({
+  conversationId,
+  recommend,
+  hasMessages,
+  onSearch,
+  onStartObikae,
+}: {
+  conversationId: string;
+  recommend?: RecommendState;
+  hasMessages: boolean;
+  onSearch?: () => void;
+  onStartObikae?: (vacancies: import('@/lib/types-bukkaku').BukkakuResult[]) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const bukkaku = useBukkaku();
+  const { memo } = useCallMemo(conversationId);
+  const hasMemo = memo.trim().length > 0;
+  const status = recommend?.status ?? 'idle';
+
+  const toggleSelect = (reinsId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(reinsId)) next.delete(reinsId);
+      else next.add(reinsId);
+      return next;
+    });
+  };
+
+  const toggleAll = (targets: { reinsId: string }[]) => {
+    setSelectedIds((prev) => {
+      const allSelected = targets.every((r) => prev.has(r.reinsId));
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const r of targets) next.delete(r.reinsId);
+      } else {
+        for (const r of targets) next.add(r.reinsId);
+      }
+      return next;
+    });
+  };
+
+  if (status === 'idle' || !recommend) {
+    return (
+      <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-1.5 text-sm font-bold text-text-primary">
+          <span>💡</span>
+          <span>物件提案 (AI)</span>
+        </div>
+        <p className="text-xs text-text-secondary mb-2.5">
+          電話メモとチャットログを解析して、条件にマッチする物件を Fango Recommend から検索します。
+        </p>
+        <button
+          type="button"
+          onClick={onSearch}
+          disabled={(!hasMessages && !hasMemo) || !onSearch}
+          className="w-full bg-accent hover:bg-accent-hover text-white font-bold text-sm rounded-lg py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          🔍 物件提案を生成
+        </button>
+        <p className="text-xs text-text-tertiary text-center mt-1.5">
+          {hasMemo ? '📞 電話メモを含めて検索' : '電話メモなし（📞 から追加できます）'}
+          {!hasMessages && !hasMemo && ' / チャットメッセージなし'}
+        </p>
+      </section>
+    );
+  }
+
+  if (status === 'searching') {
+    return (
+      <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
+          <span>💡</span>
+          <span>物件提案 (AI)</span>
+        </div>
+        <div className="flex flex-col items-center py-3">
+          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs text-text-primary mt-2">物件を検索中…</p>
+          <p className="text-xs text-text-tertiary mt-0.5">
+            会話内容からマッチする物件を探しています
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
+          <span>💡</span>
+          <span>物件提案 (AI)</span>
+        </div>
+        <p className="text-xs text-urgent mb-2">{recommend.error || 'エラーが発生しました'}</p>
+        <button
+          type="button"
+          onClick={onSearch}
+          className="w-full bg-white border border-border text-text-secondary hover:bg-surface font-bold text-xs rounded-lg py-1.5 transition-colors"
+        >
+          ↻ 再検索
+        </button>
+      </section>
+    );
+  }
+
+  const results = recommend.results;
+  const displayResults = showAll ? results : results.slice(0, 10);
+  const allDisplayedSelected =
+    displayResults.length > 0 && displayResults.every((r) => selectedIds.has(r.reinsId));
+
+  return (
+    <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 text-sm font-bold text-text-primary">
+          <span>💡</span>
+          <span>物件提案 (AI)</span>
+        </div>
+        <span className="text-xs text-accent font-bold">{results.length}件</span>
+      </div>
+
+      {/* 物確に回すボタン (選択物件があるとき & idle 状態のとき) */}
+      {selectedIds.size > 0 && bukkaku.state.status === 'idle' && (
+        <button
+          type="button"
+          onClick={() => bukkaku.start(Array.from(selectedIds))}
+          className="mb-2 w-full bg-score-mid hover:brightness-95 text-white font-bold text-sm rounded-lg py-2 transition-all"
+        >
+          🏢 物確に回す ({selectedIds.size}件)
+        </button>
+      )}
+
+      {/* 物確パイプライン (走行中 or 結果表示) */}
+      {bukkaku.state.status !== 'idle' && (
+        <BukkakuPipeline
+          state={bukkaku.state}
+          onCancel={bukkaku.cancel}
+          onReset={bukkaku.reset}
+          onStartObikae={onStartObikae}
+        />
+      )}
+
+      {/* 全選択トグル */}
+      <div className="mb-1.5 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => toggleAll(displayResults)}
+          className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
+        >
+          {allDisplayedSelected ? '選択解除' : '全選択'}
+        </button>
+        {selectedIds.size > 0 && (
+          <span className="text-xs text-score-mid font-bold">
+            {selectedIds.size}件選択中
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        {displayResults.map((r, i) => {
+          const primary = [
+            r.address,
+            r.floorPlan,
+            r.rent ? `${r.rent}万` : null,
+          ]
+            .filter(Boolean)
+            .join(' / ');
+          const secondary = [
+            r.walkMinutes ? `徒歩${r.walkMinutes}分` : null,
+            r.areaSqm ? `${r.areaSqm}㎡` : null,
+            r.builtYear ? `築${r.builtYear}年` : null,
+            r.propertyType,
+          ]
+            .filter(Boolean)
+            .join(' / ');
+          const checked = selectedIds.has(r.reinsId);
+          return (
+            <label
+              key={r.reinsId}
+              className={`flex items-start gap-2 rounded-md px-2 py-1.5 border cursor-pointer transition-colors ${
+                checked
+                  ? 'bg-score-mid/10 border-score-mid/40'
+                  : 'bg-white border-ai-border/50 hover:bg-ai-surface'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleSelect(r.reinsId)}
+                className="mt-1 shrink-0 accent-score-mid"
+              />
+              <span className="flex w-5 h-5 shrink-0 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent mt-0.5">
+                {i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-text-primary truncate">
+                  {primary || r.reinsId}
+                </p>
+                {secondary && (
+                  <p className="text-xs text-text-secondary truncate">{secondary}</p>
+                )}
+                <p className="text-xs text-text-tertiary">
+                  REINS: {r.reinsId} / スコア: {r.predictedViews.toFixed(1)}
+                </p>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      {results.length > 10 && (
+        <button
+          type="button"
+          onClick={() => setShowAll(!showAll)}
+          className="mt-2 w-full text-xs text-accent hover:underline"
+        >
+          {showAll ? '上位10件のみ表示' : `残り${results.length - 10}件を表示`}
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={onSearch}
+        className="mt-2 w-full bg-white border border-border text-text-secondary hover:bg-surface font-bold text-xs rounded-lg py-1.5 transition-colors"
+      >
+        ↻ 会話を更新して再検索
+      </button>
+    </section>
+  );
+}
+
 function PropertyTab({
+  conversationId,
   properties,
   sourceProperty,
   suggestedReactions,
+  recommend,
+  hasMessages,
+  onSearchRecommend,
+  onStartObikae,
 }: {
+  conversationId: string;
   properties: Property[];
   sourceProperty: string;
   suggestedReactions?: SuggestedReaction[];
+  recommend?: RecommendState;
+  hasMessages: boolean;
+  onSearchRecommend?: () => void;
+  onStartObikae?: (vacancies: import('@/lib/types-bukkaku').BukkakuResult[]) => void;
 }) {
   const candidateProperties = properties.filter((p) => !p.suggested);
   const suggestedProperties = properties.filter((p) => p.suggested);
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Bukaku button (standalone) */}
-      <div className="bg-surface rounded-lg p-3 border border-border">
-        <BukakuButton />
-      </div>
+      {/* AI Property Recommendation (chat log → Fango Recommend) */}
+      <PropertyRecommendation
+        conversationId={conversationId}
+        recommend={recommend}
+        hasMessages={hasMessages}
+        onSearch={onSearchRecommend}
+        onStartObikae={onStartObikae}
+      />
+
+      {/* Bukaku button (standalone) — appears only after AI recommendations complete */}
+      {recommend?.status === 'complete' && (
+        <div className="bg-surface rounded-lg p-3 border border-border">
+          <BukakuButton />
+        </div>
+      )}
 
       {/* Candidate property cards */}
       <section>
@@ -354,12 +782,18 @@ export default function ContextPanel({
   personality,
   suggestedReactions,
   onClose,
+  editableCustomer,
+  onSaveContact,
+  recommend,
+  hasMessages = false,
+  onSearchRecommend,
+  onStartObikae,
 }: ContextPanelProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('customer');
+  const [activeTab, setActiveTab] = useState<Tab>('property');
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'customer', label: '顧客' },
     { key: 'property', label: '物件' },
+    { key: 'customer', label: '顧客' },
   ];
 
   return (
@@ -397,15 +831,26 @@ export default function ContextPanel({
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === 'customer' && (
           <div key="customer" className="tab-fade-enter">
-            <CustomerTab profile={customerProfile} personality={personality} />
+            <CustomerTab
+              conversationId={conversation.id}
+              profile={customerProfile}
+              personality={personality}
+              editableCustomer={editableCustomer}
+              onSaveContact={onSaveContact}
+            />
           </div>
         )}
         {activeTab === 'property' && (
           <div key="property" className="tab-fade-enter">
             <PropertyTab
+              conversationId={conversation.id}
               properties={properties}
               sourceProperty={customerProfile.sourceProperty}
               suggestedReactions={suggestedReactions}
+              recommend={recommend}
+              hasMessages={hasMessages}
+              onSearchRecommend={onSearchRecommend}
+              onStartObikae={onStartObikae}
             />
           </div>
         )}
