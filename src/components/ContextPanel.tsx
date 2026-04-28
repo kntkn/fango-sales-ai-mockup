@@ -7,13 +7,25 @@ import type {
   Property,
   PersonalityAnalysis,
   SuggestedReaction,
-  ScoreTier,
   RecommendState,
+  FunnelStage,
 } from '@/lib/types';
 import { STAGE_CONFIG } from '@/lib/types';
-import { useBukkaku } from '@/lib/use-bukkaku';
+import { initialBukkakuState } from '@/lib/use-bukkaku';
+import type { BukkakuState } from '@/lib/types-bukkaku';
 import { useCallMemo } from '@/lib/use-call-memo';
+import { setConversationStage } from '@/lib/use-conversation-stage';
 import BukkakuPipeline from './BukkakuPipeline';
+import {
+  BrainIcon,
+  MailIcon,
+  TargetIcon,
+  TimelineIcon,
+  HouseIcon,
+  CheckIcon,
+  CloseIcon,
+  LightbulbIcon,
+} from './Icons';
 
 type Tab = 'customer' | 'property';
 
@@ -34,12 +46,23 @@ interface ContextPanelProps {
   onSaveContact?: (id: string, patch: { email?: string; phone?: string }) => Promise<void>;
   recommend?: RecommendState;
   hasMessages?: boolean;
-  onSearchRecommend?: () => void;
+  onSearchRecommend?: (resultCount: number) => void;
   /**
    * Called when the user clicks 「空室を帯替え」 in the bukkaku result card.
    * The parent is expected to open the obikae overlay.
    */
   onStartObikae?: (vacancies: import('@/lib/types-bukkaku').BukkakuResult[]) => void;
+  /**
+   * Which tab to show. Updating this value switches the active tab —
+   * useful for opening the mobile drawer directly on 物件 or 顧客.
+   */
+  initialTab?: Tab;
+  /** Per-conversation bukkaku pipeline state (undefined → idle). */
+  bukkakuState?: BukkakuState;
+  /** Cancel bukkaku for the currently selected conversation. */
+  onBukkakuCancel?: () => void;
+  /** Reset bukkaku for the currently selected conversation. */
+  onBukkakuReset?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +104,7 @@ function PersonalitySection({ personality }: { personality: PersonalityAnalysis 
   return (
     <section>
       <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
-        <span>🧠</span>
+        <BrainIcon className="h-4 w-4" />
         <span>パーソナリティ</span>
       </div>
 
@@ -150,7 +173,7 @@ function ContactEditor({
       await onSave(customer.id, { email, phone });
       setEditing(false);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : (typeof e === 'string' ? e : '保存に失敗しました'));
     } finally {
       setSaving(false);
     }
@@ -167,7 +190,7 @@ function ContactEditor({
     <section>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 text-sm font-bold text-text-primary">
-          <span>✉️</span>
+          <MailIcon className="h-4 w-4" />
           <span>連絡先 (Notion同期)</span>
         </div>
         {!editing && (
@@ -231,6 +254,15 @@ function ContactEditor({
   );
 }
 
+function MemoIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  // Material Symbols "edit_note" — same glyph as ChatThread's memo button.
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M3 10h11v2H3zm0-4h11v2H3zm0 8h7v2H3zm15.01-3.13.71-.71c.39-.39 1.02-.39 1.41 0l.71.71c.39.39.39 1.02 0 1.41l-.71.71-2.12-2.12zm-.71.71-5.3 5.3V21h2.12l5.3-5.3-2.12-2.12z" />
+    </svg>
+  );
+}
+
 function CallMemoSection({ conversationId }: { conversationId: string }) {
   const { memo, savedAt } = useCallMemo(conversationId);
   const hasMemo = memo.trim().length > 0;
@@ -239,7 +271,7 @@ function CallMemoSection({ conversationId }: { conversationId: string }) {
     <section>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 text-sm font-bold text-text-primary">
-          <span>📞</span>
+          <MemoIcon />
           <span>電話メモ</span>
         </div>
         {savedAt && (
@@ -259,7 +291,7 @@ function CallMemoSection({ conversationId }: { conversationId: string }) {
         </p>
       ) : (
         <p className="text-xs text-text-tertiary italic bg-surface rounded-lg p-2.5">
-          まだメモがありません。チャット画面の 📞 から入力できます。
+          まだメモがありません。チャット画面のメモボタンから入力できます。
         </p>
       )}
     </section>
@@ -279,8 +311,8 @@ function CustomerTab({
   editableCustomer?: EditableCustomer;
   onSaveContact?: (id: string, patch: { email?: string; phone?: string }) => Promise<void>;
 }) {
-  const stageCfg = STAGE_CONFIG[profile.stage];
-  const initial = profile.name.charAt(0);
+  const initial = Array.from(profile.name ?? '')[0] ?? '';
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const capturedReqs = profile.requirements.filter((r) => r.captured);
   const uncapturedReqs = profile.requirements.filter((r) => !r.captured);
 
@@ -288,8 +320,20 @@ function CustomerTab({
     <div className="flex flex-col gap-5">
       {/* Profile header */}
       <section className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center text-white text-lg font-bold shrink-0">
-          {initial}
+        <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center text-white text-lg font-bold shrink-0 overflow-hidden">
+          {profile.avatarUrl && !avatarBroken ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={profile.avatarUrl}
+              alt={profile.name}
+              className="w-full h-full object-cover"
+              // LINE profile picture URLs rotate; fall back to the initial
+              // when the CDN 404s so we don't render a broken-image icon.
+              onError={() => setAvatarBroken(true)}
+            />
+          ) : (
+            initial
+          )}
         </div>
         <div>
           <p className="text-lg font-bold text-text-primary leading-tight">{profile.name}</p>
@@ -312,9 +356,19 @@ function CustomerTab({
         <DetailRow
           label="ステージ"
           value={
-            <span className="inline-block text-xs bg-accent/10 text-accent rounded px-1.5 py-0.5 font-bold">
-              {stageCfg.label}
-            </span>
+            <select
+              value={profile.stage}
+              onChange={(e) =>
+                setConversationStage(conversationId, e.target.value as FunnelStage)
+              }
+              className="text-xs bg-accent/10 text-accent rounded px-1.5 py-0.5 font-bold border-0 focus:outline-none focus:ring-1 focus:ring-accent cursor-pointer"
+            >
+              {Object.entries(STAGE_CONFIG).map(([key, cfg]) => (
+                <option key={key} value={key}>
+                  {cfg.label}
+                </option>
+              ))}
+            </select>
           }
         />
       </section>
@@ -333,13 +387,13 @@ function CustomerTab({
       {/* Requirements checklist */}
       <section>
         <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
-          <span>🎯</span>
+          <TargetIcon className="h-4 w-4" />
           <span>希望条件</span>
         </div>
         <ul className="flex flex-col gap-1">
           {capturedReqs.map((req) => (
             <li key={req.label} className="flex items-start gap-2 text-sm">
-              <span className="text-score-high shrink-0">✅</span>
+              <CheckIcon className="h-4 w-4 text-score-high shrink-0 mt-0.5" />
               <span>
                 <span className="font-bold">{req.label}</span>
                 <span className="text-text-secondary">: {req.value}</span>
@@ -359,14 +413,19 @@ function CustomerTab({
       {/* Behavior timeline */}
       <section>
         <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
-          <span>📊</span>
+          <TimelineIcon className="h-4 w-4" />
           <span>行動履歴</span>
         </div>
         <div className="relative pl-4">
           <div className="absolute left-[5px] top-1 bottom-1 w-px bg-border" />
           <ul className="flex flex-col gap-2">
             {[...profile.behaviorLog].reverse().map((entry, i) => (
-              <li key={i} className="relative flex flex-col">
+              <li
+                // Composite key — date+action+i is stable against the append+reverse
+                // pattern so React doesn't remount neighbours on each new entry.
+                key={`${entry.date}::${entry.action}::${i}`}
+                className="relative flex flex-col"
+              >
                 <div className="absolute -left-4 top-[5px] w-[10px] h-[10px] rounded-full border-2 border-border bg-white" />
                 <span className="text-xs text-text-tertiary">{entry.date}</span>
                 <span className="text-xs text-text-primary">{entry.action}</span>
@@ -387,7 +446,9 @@ function PropertyCard({ property }: { property: Property }) {
   return (
     <div className="border border-border rounded-lg p-3">
       <div className="flex gap-3">
-        <div className="w-[60px] h-[60px] rounded-lg bg-surface flex items-center justify-center text-2xl shrink-0">🏠</div>
+        <div className="w-[60px] h-[60px] rounded-lg bg-surface flex items-center justify-center text-text-secondary shrink-0">
+          <HouseIcon className="h-6 w-6" />
+        </div>
         <div className="flex flex-col gap-0.5 min-w-0">
           <p className="text-sm font-bold text-text-primary truncate">{property.name}</p>
           <p className="text-xs text-text-secondary">{property.type} / {property.rent} / 徒歩{property.walkMinutes}分</p>
@@ -399,79 +460,124 @@ function PropertyCard({ property }: { property: Property }) {
         </div>
       </div>
       <div className="flex items-center gap-2 mt-2">
-        <button type="button" className="text-xs text-accent hover:text-accent-light transition-colors">メッセージに挿入</button>
+        <button
+          type="button"
+          disabled
+          title="未実装"
+          className="text-xs text-accent/40 cursor-not-allowed"
+        >
+          メッセージに挿入
+        </button>
         <span className="text-border">|</span>
-        <button type="button" className="text-xs text-accent hover:text-accent-light transition-colors" onClick={() => console.log('Bukaku:', property.name)}>物確する</button>
+        <button
+          type="button"
+          disabled
+          title="未実装"
+          className="text-xs text-accent/40 cursor-not-allowed"
+        >
+          物確する
+        </button>
       </div>
     </div>
   );
 }
 
-function PropertyRecommendation({
+const RESULT_COUNT_OPTIONS = [10, 20, 30, 40, 50] as const;
+const DEFAULT_RESULT_COUNT = 30;
+
+function ResultCountSelector({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs text-text-secondary font-bold">提案件数</span>
+      <div
+        role="radiogroup"
+        aria-label="提案件数"
+        className="flex w-full rounded-lg border border-border bg-white overflow-hidden"
+      >
+        {RESULT_COUNT_OPTIONS.map((n) => {
+          const active = n === value;
+          return (
+            <button
+              key={n}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(n)}
+              disabled={disabled}
+              className={[
+                'flex-1 text-xs font-bold py-1.5 transition-colors',
+                'border-r border-border last:border-r-0',
+                active
+                  ? 'bg-accent text-white'
+                  : 'text-text-secondary hover:bg-surface',
+                disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
+              ].join(' ')}
+            >
+              {n}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function PropertyRecommendation({
   conversationId,
   recommend,
   hasMessages,
   onSearch,
   onStartObikae,
+  bukkakuState,
+  onBukkakuCancel,
+  onBukkakuReset,
 }: {
   conversationId: string;
   recommend?: RecommendState;
   hasMessages: boolean;
-  onSearch?: () => void;
+  onSearch?: (resultCount: number) => void;
   onStartObikae?: (vacancies: import('@/lib/types-bukkaku').BukkakuResult[]) => void;
+  bukkakuState?: BukkakuState;
+  onBukkakuCancel?: () => void;
+  onBukkakuReset?: () => void;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const bukkaku = useBukkaku();
+  const [resultCount, setResultCount] = useState<number>(DEFAULT_RESULT_COUNT);
+  const bukkaku = bukkakuState ?? initialBukkakuState;
   const { memo } = useCallMemo(conversationId);
   const hasMemo = memo.trim().length > 0;
   const status = recommend?.status ?? 'idle';
 
-  const toggleSelect = (reinsId: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(reinsId)) next.delete(reinsId);
-      else next.add(reinsId);
-      return next;
-    });
-  };
-
-  const toggleAll = (targets: { reinsId: string }[]) => {
-    setSelectedIds((prev) => {
-      const allSelected = targets.every((r) => prev.has(r.reinsId));
-      const next = new Set(prev);
-      if (allSelected) {
-        for (const r of targets) next.delete(r.reinsId);
-      } else {
-        for (const r of targets) next.add(r.reinsId);
-      }
-      return next;
-    });
+  const handleSearch = () => {
+    onSearch?.(resultCount);
   };
 
   if (status === 'idle' || !recommend) {
+    const disabled = (!hasMessages && !hasMemo) || !onSearch;
     return (
-      <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
-        <div className="flex items-center gap-2 mb-1.5 text-sm font-bold text-text-primary">
-          <span>💡</span>
-          <span>物件提案 (AI)</span>
-        </div>
-        <p className="text-xs text-text-secondary mb-2.5">
-          電話メモとチャットログを解析して、条件にマッチする物件を Fango Recommend から検索します。
-        </p>
+      <div className="flex flex-col gap-2">
+        <ResultCountSelector
+          value={resultCount}
+          onChange={setResultCount}
+          disabled={disabled}
+        />
         <button
           type="button"
-          onClick={onSearch}
-          disabled={(!hasMessages && !hasMemo) || !onSearch}
-          className="w-full bg-accent hover:bg-accent-hover text-white font-bold text-sm rounded-lg py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={handleSearch}
+          disabled={disabled}
+          className="w-full bg-accent hover:bg-accent-hover text-white font-bold text-sm rounded-lg py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          🔍 物件提案を生成
+          物件提案を生成（{resultCount}件）
         </button>
-        <p className="text-xs text-text-tertiary text-center mt-1.5">
-          {hasMemo ? '📞 電話メモを含めて検索' : '電話メモなし（📞 から追加できます）'}
-          {!hasMessages && !hasMemo && ' / チャットメッセージなし'}
-        </p>
-      </section>
+      </div>
     );
   }
 
@@ -479,7 +585,7 @@ function PropertyRecommendation({
     return (
       <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
         <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
-          <span>💡</span>
+          <LightbulbIcon className="h-4 w-4" />
           <span>物件提案 (AI)</span>
         </div>
         <div className="flex flex-col items-center py-3">
@@ -497,74 +603,55 @@ function PropertyRecommendation({
     return (
       <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
         <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
-          <span>💡</span>
+          <LightbulbIcon className="h-4 w-4" />
           <span>物件提案 (AI)</span>
         </div>
         <p className="text-xs text-urgent mb-2">{recommend.error || 'エラーが発生しました'}</p>
-        <button
-          type="button"
-          onClick={onSearch}
-          className="w-full bg-white border border-border text-text-secondary hover:bg-surface font-bold text-xs rounded-lg py-1.5 transition-colors"
-        >
-          ↻ 再検索
-        </button>
+        <div className="flex flex-col gap-2">
+          <ResultCountSelector value={resultCount} onChange={setResultCount} />
+          <button
+            type="button"
+            onClick={handleSearch}
+            className="w-full bg-white border border-border text-text-secondary hover:bg-surface font-bold text-xs rounded-lg py-1.5 transition-colors"
+          >
+            ↻ {resultCount}件で再検索
+          </button>
+        </div>
       </section>
     );
   }
 
-  const results = recommend.results;
+  // Defensive — the `status !== 'complete'` path above handles the usual
+  // shape, but an upstream shift or malformed payload could deliver a
+  // `complete` state with `results` missing entirely.
+  const results = recommend.results ?? [];
   const displayResults = showAll ? results : results.slice(0, 10);
-  const allDisplayedSelected =
-    displayResults.length > 0 && displayResults.every((r) => selectedIds.has(r.reinsId));
 
   return (
     <section className="bg-ai-surface border border-ai-border rounded-lg p-3">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 text-sm font-bold text-text-primary">
-          <span>💡</span>
+          <LightbulbIcon className="h-4 w-4" />
           <span>物件提案 (AI)</span>
         </div>
         <span className="text-xs text-accent font-bold">{results.length}件</span>
       </div>
 
-      {/* 物確に回すボタン (選択物件があるとき & idle 状態のとき) */}
-      {selectedIds.size > 0 && bukkaku.state.status === 'idle' && (
-        <button
-          type="button"
-          onClick={() => bukkaku.start(Array.from(selectedIds))}
-          className="mb-2 w-full bg-score-mid hover:brightness-95 text-white font-bold text-sm rounded-lg py-2 transition-all"
-        >
-          🏢 物確に回す ({selectedIds.size}件)
-        </button>
-      )}
+      <p className="mb-2 text-xs text-text-tertiary">
+        提案結果は自動で物確&AD検索にかかります。
+      </p>
 
       {/* 物確パイプライン (走行中 or 結果表示) */}
-      {bukkaku.state.status !== 'idle' && (
+      {bukkaku.status !== 'idle' && (
         <BukkakuPipeline
-          state={bukkaku.state}
-          onCancel={bukkaku.cancel}
-          onReset={bukkaku.reset}
+          state={bukkaku}
+          onCancel={onBukkakuCancel ?? (() => {})}
+          onReset={onBukkakuReset ?? (() => {})}
           onStartObikae={onStartObikae}
         />
       )}
 
-      {/* 全選択トグル */}
-      <div className="mb-1.5 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => toggleAll(displayResults)}
-          className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
-        >
-          {allDisplayedSelected ? '選択解除' : '全選択'}
-        </button>
-        {selectedIds.size > 0 && (
-          <span className="text-xs text-score-mid font-bold">
-            {selectedIds.size}件選択中
-          </span>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-1.5">
+      <div className="mt-2 flex flex-col gap-1.5">
         {displayResults.map((r, i) => {
           const primary = [
             r.address,
@@ -581,22 +668,11 @@ function PropertyRecommendation({
           ]
             .filter(Boolean)
             .join(' / ');
-          const checked = selectedIds.has(r.reinsId);
           return (
-            <label
+            <div
               key={r.reinsId}
-              className={`flex items-start gap-2 rounded-md px-2 py-1.5 border cursor-pointer transition-colors ${
-                checked
-                  ? 'bg-score-mid/10 border-score-mid/40'
-                  : 'bg-white border-ai-border/50 hover:bg-ai-surface'
-              }`}
+              className="flex items-start gap-2 rounded-md px-2 py-1.5 border bg-white border-ai-border/50"
             >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => toggleSelect(r.reinsId)}
-                className="mt-1 shrink-0 accent-score-mid"
-              />
               <span className="flex w-5 h-5 shrink-0 items-center justify-center rounded-full bg-accent/10 text-xs font-bold text-accent mt-0.5">
                 {i + 1}
               </span>
@@ -611,7 +687,7 @@ function PropertyRecommendation({
                   REINS: {r.reinsId} / スコア: {r.predictedViews.toFixed(1)}
                 </p>
               </div>
-            </label>
+            </div>
           );
         })}
       </div>
@@ -626,35 +702,42 @@ function PropertyRecommendation({
         </button>
       )}
 
-      <button
-        type="button"
-        onClick={onSearch}
-        className="mt-2 w-full bg-white border border-border text-text-secondary hover:bg-surface font-bold text-xs rounded-lg py-1.5 transition-colors"
-      >
-        ↻ 会話を更新して再検索
-      </button>
+      <div className="mt-2 flex flex-col gap-2">
+        <ResultCountSelector value={resultCount} onChange={setResultCount} />
+        <button
+          type="button"
+          onClick={handleSearch}
+          className="w-full bg-white border border-border text-text-secondary hover:bg-surface font-bold text-xs rounded-lg py-1.5 transition-colors"
+        >
+          ↻ 会話を更新して{resultCount}件で再検索
+        </button>
+      </div>
     </section>
   );
 }
 
-function PropertyTab({
+export function PropertyTab({
   conversationId,
   properties,
-  sourceProperty,
   suggestedReactions,
   recommend,
   hasMessages,
   onSearchRecommend,
   onStartObikae,
+  bukkakuState,
+  onBukkakuCancel,
+  onBukkakuReset,
 }: {
   conversationId: string;
   properties: Property[];
-  sourceProperty: string;
   suggestedReactions?: SuggestedReaction[];
   recommend?: RecommendState;
   hasMessages: boolean;
-  onSearchRecommend?: () => void;
+  onSearchRecommend?: (resultCount: number) => void;
   onStartObikae?: (vacancies: import('@/lib/types-bukkaku').BukkakuResult[]) => void;
+  bukkakuState?: BukkakuState;
+  onBukkakuCancel?: () => void;
+  onBukkakuReset?: () => void;
 }) {
   const candidateProperties = properties.filter((p) => !p.suggested);
   const suggestedProperties = properties.filter((p) => p.suggested);
@@ -668,6 +751,9 @@ function PropertyTab({
         hasMessages={hasMessages}
         onSearch={onSearchRecommend}
         onStartObikae={onStartObikae}
+        bukkakuState={bukkakuState}
+        onBukkakuCancel={onBukkakuCancel}
+        onBukkakuReset={onBukkakuReset}
       />
 
       {/* Bukaku button (standalone) — appears only after AI recommendations complete */}
@@ -679,10 +765,6 @@ function PropertyTab({
 
       {/* Candidate property cards */}
       <section>
-        <div className="flex items-center gap-2 mb-3 text-sm font-bold text-text-primary">
-          <span>🏠</span>
-          <span>提案候補物件</span>
-        </div>
         <div className="flex flex-col gap-3">
           {(candidateProperties.length > 0 ? candidateProperties : properties).map((prop) => (
             <PropertyCard key={prop.id} property={prop} />
@@ -691,31 +773,25 @@ function PropertyTab({
       </section>
 
       {/* Past suggestions */}
-      <section>
-        <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
-          <span>📌</span>
-          <span>過去提案済み物件</span>
-        </div>
-        <ul className="flex flex-col gap-1">
-          {suggestedProperties.length > 0 ? (
-            suggestedProperties.map((p) => (
+      {suggestedProperties.length > 0 && (
+        <section>
+          <ul className="flex flex-col gap-1">
+            {suggestedProperties.map((p) => (
               <li key={p.id} className="text-xs text-text-secondary">・{p.name}</li>
-            ))
-          ) : (
-            <li className="text-xs text-text-secondary">・{sourceProperty}（反響元）</li>
-          )}
-        </ul>
-      </section>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Suggested reactions */}
       {suggestedReactions && suggestedReactions.length > 0 && (
         <section>
           <div className="flex items-center gap-2 mb-2 text-sm font-bold text-text-primary">
-            <span>📊</span>
+            <TimelineIcon className="h-4 w-4" />
             <span>提案への反応</span>
           </div>
           <div className="flex flex-col gap-1">
-            {suggestedReactions.map((r) => {
+            {suggestedReactions.map((r, i) => {
               const reactionText =
                 r.reaction === 'interested' ? '興味あり' :
                 r.reaction === 'rejected' ? '見送り' : '検討中';
@@ -723,7 +799,10 @@ function PropertyTab({
                 r.reaction === 'interested' ? 'text-accent' :
                 r.reaction === 'rejected' ? 'text-urgent' : 'text-text-tertiary';
               return (
-                <div key={r.propertyName} className="flex items-center justify-between text-xs py-1.5 border-b border-border-light last:border-0">
+                // Two reactions can legitimately share propertyName (same
+                // building shown twice, different floor). Compose with i so
+                // React doesn't collapse them onto one DOM node.
+                <div key={`${r.propertyName}::${i}`} className="flex items-center justify-between text-xs py-1.5 border-b border-border-light last:border-0">
                   <div className="flex flex-col">
                     <span className="text-text-primary font-bold">{r.propertyName}</span>
                     {r.comment && <span className="text-text-tertiary text-xs">{r.comment}</span>}
@@ -788,8 +867,18 @@ export default function ContextPanel({
   hasMessages = false,
   onSearchRecommend,
   onStartObikae,
+  initialTab = 'property',
+  bukkakuState,
+  onBukkakuCancel,
+  onBukkakuReset,
 }: ContextPanelProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('property');
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+
+  // Keep local tab in sync when parent changes the requested tab
+  // (e.g. opening the drawer via avatar vs. home icon)
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'property', label: '物件' },
@@ -797,18 +886,18 @@ export default function ContextPanel({
   ];
 
   return (
-    <div className="flex flex-col h-full bg-white">
-      {/* Tab bar */}
-      <div className="flex border-b border-border shrink-0">
+    <div className="flex flex-col h-full w-full min-w-0 glass-panel">
+      {/* Tab bar — height matches ChatThread header (h-14) so both underlines align */}
+      <div className="flex h-14 border-b border-border shrink-0 items-stretch">
         {/* Close button (mobile + tablet) */}
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="xl:hidden w-10 flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface transition-colors shrink-0 border-r border-border"
+            className="xl:hidden w-12 flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface transition-colors shrink-0 border-r border-border touch-manipulation"
             aria-label="閉じる"
           >
-            ✕
+            <CloseIcon className="h-4 w-4" />
           </button>
         )}
         {tabs.map((tab) => (
@@ -816,7 +905,7 @@ export default function ContextPanel({
             key={tab.key}
             type="button"
             onClick={() => setActiveTab(tab.key)}
-            className={`flex-1 py-2.5 text-sm text-center transition-colors ${
+            className={`flex-1 text-sm text-center transition-colors flex items-center justify-center ${
               activeTab === tab.key
                 ? 'font-bold text-text-primary border-b-2 border-accent'
                 : 'text-text-secondary hover:text-text-primary'
@@ -845,12 +934,14 @@ export default function ContextPanel({
             <PropertyTab
               conversationId={conversation.id}
               properties={properties}
-              sourceProperty={customerProfile.sourceProperty}
               suggestedReactions={suggestedReactions}
               recommend={recommend}
               hasMessages={hasMessages}
               onSearchRecommend={onSearchRecommend}
               onStartObikae={onStartObikae}
+              bukkakuState={bukkakuState}
+              onBukkakuCancel={onBukkakuCancel}
+              onBukkakuReset={onBukkakuReset}
             />
           </div>
         )}

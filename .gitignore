@@ -42,3 +42,6 @@ next-env.d.ts
 
 # runtime data (LINE messages etc.)
 /data
+
+# playwright-cli artifacts (screenshots, console logs, page snapshots)
+/.playwright-cli

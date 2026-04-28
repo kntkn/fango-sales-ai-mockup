@@ -19,7 +19,11 @@ function readAgents(): SalesAgent[] {
     if (!raw) return SEED_AGENTS;
     const parsed = JSON.parse(raw) as SalesAgent[];
     if (!Array.isArray(parsed) || parsed.length === 0) return SEED_AGENTS;
-    return parsed.filter((a) => a && typeof a.id === 'string' && typeof a.name === 'string');
+    const cleaned = parsed.filter((a) => a && typeof a.id === 'string' && typeof a.name === 'string');
+    // If every stored entry was malformed, fall back to seeds so the UI isn't
+    // stranded with an empty agent list that the user has no way to recover
+    // from short of clearing localStorage.
+    return cleaned.length > 0 ? cleaned : SEED_AGENTS;
   } catch {
     return SEED_AGENTS;
   }

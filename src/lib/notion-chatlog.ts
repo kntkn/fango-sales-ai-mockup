@@ -1,7 +1,12 @@
 import 'server-only';
 import { notion, CUSTOMER_DS_ID } from './notion';
 
-const SECTION_MARKER = '💬 チャットログ';
+// Marker header used to identify the chat log section in an existing Notion
+// page. Preserved as-is for backward compatibility with pages that already
+// have this heading — changing the string would cause a duplicate section to
+// be appended on the next message.
+const SECTION_MARKER = 'チャットログ';
+const LEGACY_SECTION_MARKER = '💬 チャットログ';
 const MAX_TEXT_CHUNK = 1900;
 
 export type ChatDirection = 'USER' | 'STAFF';
@@ -101,7 +106,11 @@ async function loadPageState(pageId: string): Promise<PageState> {
         const text = (b.heading_2?.rich_text ?? [])
           .map((r) => r.plain_text ?? '')
           .join('');
-        if (text.includes(SECTION_MARKER)) state.sectionInitialized = true;
+        // Match both the new marker and the legacy (emoji-prefixed) form so
+        // existing pages aren't treated as un-initialized and re-seeded.
+        if (text.includes(SECTION_MARKER) || text.includes(LEGACY_SECTION_MARKER)) {
+          state.sectionInitialized = true;
+        }
       } else if (block.type === 'heading_3') {
         const b = block as { heading_3?: { rich_text?: Array<{ plain_text?: string }> } };
         const text = (b.heading_3?.rich_text ?? [])
@@ -168,8 +177,10 @@ export async function appendChatMessage(
     });
   }
 
-  const dirIcon = msg.direction === 'USER' ? '👤' : '🏢';
-  const headerLine = `[${timeStr}] ${dirIcon} ${msg.direction} — ${senderName}`;
+  // Direction is already spelled out in the header; drop the emoji glyph per
+  // the global no-emoji rule. Existing log lines in Notion pages remain
+  // valid — this only affects newly appended messages.
+  const headerLine = `[${timeStr}] ${msg.direction} — ${senderName}`;
   const typeLabel =
     msg.messageType && msg.messageType !== 'text'
       ? `[${msg.messageType.toUpperCase()}] `

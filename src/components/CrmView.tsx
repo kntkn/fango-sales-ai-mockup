@@ -1,8 +1,31 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useSyncExternalStore } from 'react';
+
+// Cached-snapshot clock for useSyncExternalStore. See ConversationList for
+// the reasoning — getSnapshot MUST return a stable reference or React flags
+// an infinite-loop risk.
+let cachedNow = 0;
+function subscribeNow(onChange: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  cachedNow = Date.now();
+  onChange();
+  const id = window.setInterval(() => {
+    cachedNow = Date.now();
+    onChange();
+  }, 30_000);
+  return () => window.clearInterval(id);
+}
+function getNowClient(): number {
+  return cachedNow;
+}
+function getNowServer(): number {
+  return 0;
+}
 import type { Conversation, ScoreTier, FunnelStage } from '@/lib/types';
 import { SCORE_CONFIG, STAGE_CONFIG } from '@/lib/types';
+import { ScoreIcon, LocationIcon, ChatBubbleIcon } from './Icons';
+import { setConversationStage } from '@/lib/use-conversation-stage';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -49,8 +72,11 @@ const STAGE_COLORS: Record<FunnelStage, string> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function relativeTime(date: Date): string {
-  const diffMs = Date.now() - date.getTime();
+function relativeTime(date: Date, now: number): string {
+  const t = date.getTime();
+  if (!Number.isFinite(t)) return '—';
+  const diffMs = now - t;
+  if (diffMs < 0) return 'たった今';
   const mins = Math.floor(diffMs / 60_000);
   if (mins < 1) return 'たった今';
   if (mins < 60) return `${mins}分前`;
@@ -84,9 +110,10 @@ function ScoreBadge({ score }: { score: ScoreTier }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-bold leading-none ${bgMap[score]} ${textMap[score]}`}
+      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-bold leading-none ${bgMap[score]} ${textMap[score]}`}
     >
-      {cfg.icon}&thinsp;{cfg.label}
+      <ScoreIcon tier={score} className="h-2.5 w-2.5" />
+      {cfg.label}
     </span>
   );
 }
@@ -105,7 +132,7 @@ function NameCell({
   onRenameLine?: (lineUserId: string, aliasName: string | null) => Promise<void>;
 }) {
   const { customerName, lineUserId, lineDisplayName, lineAliasName, unread } = conversation;
-  const initial = customerName.charAt(0);
+  const initial = Array.from(customerName ?? '')[0] ?? '';
   const canRename = !!onRenameLine && !!lineUserId;
 
   const [editing, setEditing] = useState(false);
@@ -220,6 +247,9 @@ function NameCell({
 export default function CrmView({ conversations, onSelectConversation, onRenameLine }: Props) {
   const [sortCol, setSortCol] = useState<SortColumn>('lastMessageTime');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // "now" via useSyncExternalStore so SSR renders a stable 0 and the client
+  // ticks every 30s. See ConversationList for the same pattern.
+  const now = useSyncExternalStore(subscribeNow, getNowClient, getNowServer);
 
   const handleSort = (col: SortColumn) => {
     if (sortCol === col) {
@@ -233,22 +263,32 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
   const sorted = useMemo(() => {
     const list = [...conversations];
     const dir = sortDir === 'asc' ? 1 : -1;
+    const toTime = (d: Date) => {
+      const t = new Date(d).getTime();
+      return Number.isFinite(t) ? t : 0;
+    };
 
     list.sort((a, b) => {
+      let primary = 0;
       switch (sortCol) {
         case 'customerName':
-          return dir * a.customerName.localeCompare(b.customerName, 'ja');
+          primary = dir * (a.customerName ?? '').localeCompare(b.customerName ?? '', 'ja');
+          break;
         case 'stage':
-          return dir * (STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage]);
+          primary = dir * (STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage]);
+          break;
         case 'score':
-          return dir * (SCORE_ORDER[a.score] - SCORE_ORDER[b.score]);
+          primary = dir * (SCORE_ORDER[a.score] - SCORE_ORDER[b.score]);
+          break;
         case 'area':
-          return dir * a.area.localeCompare(b.area, 'ja');
+          primary = dir * (a.area ?? '').localeCompare(b.area ?? '', 'ja');
+          break;
         case 'lastMessageTime':
-          return dir * (a.lastMessageTime.getTime() - b.lastMessageTime.getTime());
-        default:
-          return 0;
+          primary = dir * (toTime(a.lastMessageTime) - toTime(b.lastMessageTime));
+          break;
       }
+      // Stable fallback by recency so ties don't jitter on re-renders.
+      return primary || toTime(b.lastMessageTime) - toTime(a.lastMessageTime);
     });
 
     return list;
@@ -292,13 +332,19 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
 
           <div className="h-6 w-px bg-border" />
 
-          {/* Stage counts */}
+          {/* Stage counts — iterate STAGE_CONFIG so the order is stable,
+              independent of which stage happened to appear first in the feed. */}
           <div className="flex items-center gap-3 text-xs">
-            {Object.entries(stageCounts).map(([label, count]) => (
-              <span key={label} className="text-text-secondary">
-                {label} <span className="font-bold text-text-primary">{count}</span>
-              </span>
-            ))}
+            {(Object.keys(STAGE_CONFIG) as FunnelStage[]).map((key) => {
+              const label = STAGE_CONFIG[key].label;
+              const count = stageCounts[label] ?? 0;
+              if (count === 0) return null;
+              return (
+                <span key={key} className="text-text-secondary">
+                  {label} <span className="font-bold text-text-primary">{count}</span>
+                </span>
+              );
+            })}
           </div>
 
           <div className="h-6 w-px bg-border" />
@@ -308,8 +354,9 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
             {(['high', 'mid', 'low'] as ScoreTier[]).map((tier) => {
               const cfg = SCORE_CONFIG[tier];
               return (
-                <span key={tier} className="text-text-secondary">
-                  {cfg.icon} {cfg.label}{' '}
+                <span key={tier} className="inline-flex items-center gap-1 text-text-secondary">
+                  <ScoreIcon tier={tier} className="h-2.5 w-2.5" />
+                  {cfg.label}{' '}
                   <span className="font-bold text-text-primary">{scoreCounts[tier]}</span>
                 </span>
               );
@@ -327,11 +374,24 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
                 {columns.map((col) => (
                   <th
                     key={col.key}
-                    className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary cursor-pointer select-none hover:text-text-primary transition-colors"
-                    onClick={() => handleSort(col.key)}
+                    scope="col"
+                    aria-sort={
+                      sortCol === col.key
+                        ? sortDir === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                    className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary select-none"
                   >
-                    {col.label}
-                    <SortArrow active={sortCol === col.key} dir={sortDir} />
+                    <button
+                      type="button"
+                      onClick={() => handleSort(col.key)}
+                      className="inline-flex items-center gap-0.5 cursor-pointer hover:text-text-primary transition-colors"
+                    >
+                      {col.label}
+                      <SortArrow active={sortCol === col.key} dir={sortDir} />
+                    </button>
                   </th>
                 ))}
                 <th className="text-left px-4 py-2.5 text-xs font-bold text-text-secondary">
@@ -344,7 +404,6 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
             </thead>
             <tbody className="divide-y divide-border-light">
               {sorted.map((c) => {
-                const stageCfg = STAGE_CONFIG[c.stage];
                 const stageColor = STAGE_COLORS[c.stage];
 
                 return (
@@ -363,9 +422,19 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
 
                     {/* Stage */}
                     <td className="px-4 py-3">
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${stageColor}`}>
-                        {stageCfg.label}
-                      </span>
+                      <select
+                        value={c.stage}
+                        onChange={(e) =>
+                          setConversationStage(c.id, e.target.value as FunnelStage)
+                        }
+                        className={`rounded-full px-2 py-0.5 text-xs font-bold border-0 focus:outline-none focus:ring-1 focus:ring-accent cursor-pointer ${stageColor}`}
+                      >
+                        {Object.entries(STAGE_CONFIG).map(([key, cfg]) => (
+                          <option key={key} value={key}>
+                            {cfg.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
 
                     {/* Score */}
@@ -375,7 +444,10 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
 
                     {/* Area */}
                     <td className="px-4 py-3">
-                      <span className="text-xs text-text-secondary">📍{c.area}</span>
+                      <span className="inline-flex items-center gap-1 text-xs text-text-secondary">
+                        <LocationIcon className="h-3 w-3" />
+                        {c.area}
+                      </span>
                     </td>
 
                     {/* Last message */}
@@ -388,7 +460,7 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
                     {/* Elapsed time */}
                     <td className="px-4 py-3">
                       <span className="text-xs text-text-secondary whitespace-nowrap">
-                        {relativeTime(c.lastMessageTime)}
+                        {relativeTime(c.lastMessageTime, now)}
                       </span>
                     </td>
 
@@ -397,17 +469,19 @@ export default function CrmView({ conversations, onSelectConversation, onRenameL
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          className="px-2 py-1 rounded text-xs font-bold bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
-                          onClick={() => console.log('Call:', c.customerName)}
+                          disabled
+                          title="未実装"
+                          className="px-2 py-1 rounded text-xs font-bold bg-accent/5 text-accent/40 cursor-not-allowed"
                         >
-                          📞 電話
+                          電話
                         </button>
                         <button
                           type="button"
-                          className="px-2 py-1 rounded text-xs font-bold bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
                           onClick={() => onSelectConversation(c.id)}
                         >
-                          💬 チャット
+                          <ChatBubbleIcon className="h-3 w-3" />
+                          チャット
                         </button>
                       </div>
                     </td>

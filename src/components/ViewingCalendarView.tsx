@@ -1,7 +1,42 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import type { SalesAgent, ViewingSlot } from '@/lib/types';
+
+// Day boundary as a useSyncExternalStore feed. The snapshot value must be a
+// stable reference (same primitive on repeated calls) — otherwise React
+// treats the store as constantly changing and warns about an infinite loop.
+// We cache the last-observed midnight and only refresh it from within
+// `subscribe`'s ticker.
+function computeDayStart(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+let cachedDayMs = 0;
+function subscribeDay(onChange: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  cachedDayMs = computeDayStart();
+  onChange();
+  const id = window.setInterval(() => {
+    const next = computeDayStart();
+    if (next !== cachedDayMs) {
+      cachedDayMs = next;
+      onChange();
+    }
+  }, 60 * 60 * 1000);
+  return () => window.clearInterval(id);
+}
+function getDayClient(): number {
+  return cachedDayMs;
+}
+function getDayServer(): number {
+  return 0;
+}
+function useToday(): Date | null {
+  const ms = useSyncExternalStore(subscribeDay, getDayClient, getDayServer);
+  return ms === 0 ? null : new Date(ms);
+}
 
 interface Props {
   agents: SalesAgent[];
@@ -16,18 +51,8 @@ const HOURS = Array.from({ length: 10 }, (_, i) => i + 9); // 9..18
 const HOUR_HEIGHT = 60; // px per hour
 const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 
-function formatDate(d: Date): string {
-  return `${d.getMonth() + 1}/${d.getDate()}(${DAY_LABELS[d.getDay()]})`;
-}
-
 function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-function getToday(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
 }
 
 // ---------------------------------------------------------------------------
@@ -35,8 +60,12 @@ function getToday(): Date {
 // ---------------------------------------------------------------------------
 
 function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: ViewingSlot[] }) {
-  const today = getToday();
-  const todaySlots = slots.filter((s) => isSameDay(s.startTime, today));
+  const today = useToday();
+  const todayMs = today?.getTime() ?? 0;
+  const todaySlots = useMemo(
+    () => (todayMs ? slots.filter((s) => isSameDay(s.startTime, new Date(todayMs))) : []),
+    [slots, todayMs],
+  );
 
   const todaySummary = useMemo(() => {
     const confirmed = todaySlots.filter((s) => s.status === 'confirmed').length;
@@ -107,13 +136,14 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
                   return (
                     <div
                       key={s.id}
-                      className={`absolute left-1 right-1 rounded-md px-2 py-1.5 cursor-pointer transition-colors hover:brightness-95 ${
+                      // Read-only in the mockup — no open-detail flow is wired
+                      // yet, so don't advertise clickability.
+                      className={`absolute left-1 right-1 rounded-md px-2 py-1.5 transition-colors ${
                         isConfirmed
                           ? 'bg-accent/10 border border-accent/30'
                           : 'bg-score-mid/10 border border-score-mid/30'
                       }`}
                       style={{ top, height: Math.max(height, 36) }}
-                      onClick={() => console.log('Open viewing:', s.customerName)}
                     >
                       <div className="text-xs font-bold text-text-primary truncate">{s.customerName}</div>
                       <div className="text-xs text-text-secondary truncate">{s.area} {s.property}</div>
@@ -138,14 +168,14 @@ function TodayTimeline({ agents, slots }: { agents: SalesAgent[]; slots: Viewing
 // ---------------------------------------------------------------------------
 
 function TwoWeekCalendar({ agents, slots }: { agents: SalesAgent[]; slots: ViewingSlot[] }) {
-  const today = getToday();
-
+  const today = useToday();
+  // Memo on the primitive timestamp so the 14-day array isn't rebuilt on
+  // every render (a Date object would always be a new reference).
+  const todayMs = today?.getTime() ?? 0;
   const days = useMemo(() => {
-    return Array.from({ length: 14 }, (_, i) => {
-      const d = new Date(today.getTime() + i * 24 * 60 * 60_000);
-      return d;
-    });
-  }, [today]);
+    if (!todayMs) return [];
+    return Array.from({ length: 14 }, (_, i) => new Date(todayMs + i * 24 * 60 * 60_000));
+  }, [todayMs]);
 
   const getCounts = (agentId: string, day: Date) => {
     const daySlots = slots.filter((s) => s.agentId === agentId && isSameDay(s.startTime, day));
@@ -192,8 +222,7 @@ function TwoWeekCalendar({ agents, slots }: { agents: SalesAgent[]; slots: Viewi
                     return (
                       <td
                         key={i}
-                        className={`text-center py-2.5 cursor-pointer hover:bg-surface transition-colors ${isToday ? 'bg-accent/5' : ''}`}
-                        onClick={() => console.log('Calendar cell:', agent.name, formatDate(d))}
+                        className={`text-center py-2.5 transition-colors ${isToday ? 'bg-accent/5' : ''}`}
                       >
                         <div className="flex items-center justify-center gap-0.5">
                           {Array.from({ length: confirmed }, (_, j) => (

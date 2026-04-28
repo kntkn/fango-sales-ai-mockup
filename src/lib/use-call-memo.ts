@@ -44,15 +44,20 @@ function readFromStorage(conversationId: string): StoredMemo | null {
 
 export function useCallMemo(conversationId: string): UseCallMemoResult {
   const key = useMemo(() => storageKey(conversationId), [conversationId]);
-  const [memo, setMemoState] = useState('');
-  const [savedAt, setSavedAt] = useState<string | null>(null);
-
-  // Reload when conversationId changes
-  useEffect(() => {
+  // React 19 derived-from-props pattern: store the previous conversationId
+  // as state and — when it changes — re-read storage and update both memo
+  // fields during the same render. `setState` during render is allowed and
+  // does not cause extra renders when used this way (unlike the old
+  // useEffect pattern, which violates `set-state-in-effect`).
+  const [prevConvId, setPrevConvId] = useState(conversationId);
+  const [memo, setMemoState] = useState<string>(() => readFromStorage(conversationId)?.text ?? '');
+  const [savedAt, setSavedAt] = useState<string | null>(() => readFromStorage(conversationId)?.savedAt ?? null);
+  if (prevConvId !== conversationId) {
+    setPrevConvId(conversationId);
     const stored = readFromStorage(conversationId);
     setMemoState(stored?.text ?? '');
     setSavedAt(stored?.savedAt ?? null);
-  }, [conversationId]);
+  }
 
   // Subscribe to in-tab updates from other components
   useEffect(() => {

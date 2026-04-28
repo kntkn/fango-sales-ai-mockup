@@ -36,7 +36,16 @@ export type FunnelStage =
 export type AiMode = 'pounce' | 'suggest' | 'expand' | 'tune' | 'nurture';
 export type MessageSender = 'customer' | 'agent' | 'system';
 export type ReadStatus = 'sent' | 'delivered' | 'read';
-export type ViewMode = 'chat' | 'crm' | 'calendar' | 'inquiries' | 'agents';
+export type ViewMode =
+  | 'chat'
+  | 'crm'
+  | 'calendar'
+  | 'inquiries'
+  | 'agents'
+  // liquid-only modes (3002 set). Classic Header ignores these.
+  | 'ad'
+  | 'kanban'
+  | 'staff';
 
 export interface Conversation {
   id: string;
@@ -60,6 +69,16 @@ export interface Conversation {
   assignedAgentId?: string;
 }
 
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'file' | 'sticker';
+
+export interface MessageAttachment {
+  kind: AttachmentKind;
+  url: string;            // /api/line/content/{messageId} — or external for stickers
+  contentType?: string;
+  fileName?: string;
+  fileSize?: number;
+}
+
 export interface Message {
   id: string;
   sender: MessageSender;
@@ -68,6 +87,15 @@ export interface Message {
   readStatus?: ReadStatus;
   isProperty?: boolean;
   interpretation?: string;
+  attachment?: MessageAttachment;
+  // LINE quote/reply plumbing:
+  //   quoteToken     — token that *this* message can be quoted by (used when
+  //                    the user or staff taps "リプライ" on this bubble).
+  //   quotedMessageId — id of the message this one is replying to; the UI
+  //                    resolves it against the current thread to render the
+  //                    quoted snippet above the bubble.
+  quoteToken?: string;
+  quotedMessageId?: string;
 }
 
 export interface SuggestedProperty {
@@ -95,6 +123,7 @@ export interface SmartReply {
 export interface CustomerProfile {
   name: string;
   lineId: string;
+  avatarUrl?: string;
   firstContact: string;
   source: string;
   sourceProperty: string;
@@ -165,10 +194,14 @@ export interface SuggestedReaction {
   comment?: string;
 }
 
-export const SCORE_CONFIG: Record<ScoreTier, { label: string; color: string; icon: string }> = {
-  high: { label: '高', color: 'var(--score-high)', icon: '🟢' },
-  mid: { label: '中', color: 'var(--score-mid)', icon: '🟡' },
-  low: { label: '低', color: 'var(--score-low)', icon: '⚪' },
+// Icons intentionally NOT in this data-only module — see
+// `src/components/Icons.tsx` for the `<ScoreIcon tier=... />` component. We
+// can't inline Material Symbols here without dragging React into a pure types
+// file, and per ~/.claude/rules/no-emoji.md emoji strings are forbidden.
+export const SCORE_CONFIG: Record<ScoreTier, { label: string; color: string }> = {
+  high: { label: '高', color: 'var(--score-high)' },
+  mid: { label: '中', color: 'var(--score-mid)' },
+  low: { label: '低', color: 'var(--score-low)' },
 };
 
 export const STAGE_CONFIG: Record<FunnelStage, { label: string; labelShort: string }> = {
@@ -182,10 +215,11 @@ export const STAGE_CONFIG: Record<FunnelStage, { label: string; labelShort: stri
   deal: { label: '成約', labelShort: '成約' },
 };
 
-export const AI_MODE_CONFIG: Record<AiMode, { label: string; icon: string }> = {
-  pounce: { label: '即応', icon: '⚡' },
-  suggest: { label: '提案', icon: '💡' },
-  expand: { label: '展開', icon: '📝' },
-  tune: { label: '調整', icon: '🎨' },
-  nurture: { label: '追客', icon: '🌱' },
+// See `AiModeIcon` in `src/components/Icons.tsx` for the glyph per mode.
+export const AI_MODE_CONFIG: Record<AiMode, { label: string }> = {
+  pounce: { label: '即応' },
+  suggest: { label: '提案' },
+  expand: { label: '展開' },
+  tune: { label: '調整' },
+  nurture: { label: '追客' },
 };

@@ -1,5 +1,14 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
+/* Fonts are injected via <link> in app/layout.tsx (more reliable than @import
+   alongside Tailwind 4). */
 @import "tailwindcss";
+
+/* ==========================================================================
+   Responsive Policy
+   - Breakpoint: md (768px) only. Mobile (< md) = chat-focused single pane.
+   - Desktop (>= md) = existing 3-column layout.
+   - Viewport units: use dvh / svh for full-height layouts (iOS Safari safe).
+   - Safe area: iOS notch / home indicator handled via env(safe-area-inset-*).
+   ========================================================================== */
 
 /* ==========================================================================
    DADS-aligned Design Tokens
@@ -8,40 +17,40 @@
    ========================================================================== */
 
 :root {
-  /* --- Brand Colors (FANGO-specific, contrast-verified) --- */
-  --bg: #ffffff;
-  --surface: #f2f2f2;              /* DADS solid-gray-50 */
+  /* --- Brand Colors (Apple Liquid Glass Blue) --- */
+  --bg: #f5f7fb;                   /* Cool off-white canvas */
+  --surface: #eef2f8;              /* Cool surface gray */
   --surface-elevated: #ffffff;
-  --primary: #0f3d3e;              /* FANGO brand teal (16.1:1 on white) */
-  --primary-light: #1a5c5e;
-  --primary-hover: #0a2c2d;        /* Darkened for hover */
-  --accent: #259d63;               /* DADS success-1 (replaces #10b981) */
-  --accent-light: #51b883;         /* DADS green-400 */
-  --accent-hover: #197a4b;         /* DADS success-2 */
+  --primary: #0a84ff;              /* iOS systemBlue */
+  --primary-light: #409cff;
+  --primary-hover: #0064d0;
+  --accent: #0a84ff;               /* Same as primary — unified blue */
+  --accent-light: #60a5fa;
+  --accent-hover: #0064d0;
 
   /* --- Text (DADS solid-gray scale, 4.5:1+ on white) --- */
-  --text-primary: #1a1a1a;         /* DADS solid-gray-900 (18.4:1) */
-  --text-secondary: #767676;       /* DADS solid-gray-536 (4.54:1 — AA boundary) */
-  --text-tertiary: #767676;        /* Merged with secondary (old #9ca3af failed 4.5:1) */
+  --text-primary: #0f172a;         /* Slate-900, slightly cooler than pure black */
+  --text-secondary: #64748b;       /* Slate-500 (4.54:1) */
+  --text-tertiary: #64748b;
 
-  /* --- Borders (DADS: non-text 3:1 minimum) --- */
-  --border: #949494;               /* DADS solid-gray-420 (3.67:1 on white) */
-  --border-light: #e6e6e6;         /* DADS solid-gray-100 */
+  /* --- Borders (cool neutral) --- */
+  --border: #8b97a8;               /* Cool slate (3.0:1 on white) */
+  --border-light: #dbe3ee;
 
-  /* --- Semantic Status (DADS-aligned) --- */
-  --score-high: #259d63;           /* DADS success-1 */
-  --score-mid: #b78f00;            /* DADS warning-yellow-1 */
-  --score-low: #767676;            /* DADS solid-gray-536 */
-  --urgent: #ec0000;               /* DADS error-1 */
+  /* --- Semantic Status (keep green for success) --- */
+  --score-high: #34c759;           /* iOS systemGreen — success still reads as green */
+  --score-mid: #ff9f0a;            /* iOS systemOrange */
+  --score-low: #64748b;
+  --urgent: #ff3b30;               /* iOS systemRed */
 
-  /* --- AI Surface --- */
-  --ai-surface: #e6f5ec;           /* DADS green-50 */
-  --ai-border: #9bd4b5;            /* DADS green-200 */
-  --ai-text: #0c472a;             /* DADS green-1000 */
+  /* --- AI Surface (soft blue) --- */
+  --ai-surface: #eff6ff;           /* blue-50 */
+  --ai-border: #bfdbfe;            /* blue-200 */
+  --ai-text: #0a3d82;              /* deep navy */
 
   /* --- Chat Bubbles --- */
-  --customer-bubble: #f2f2f2;      /* DADS solid-gray-50 */
-  --agent-bubble: #0f3d3e;         /* FANGO primary */
+  --customer-bubble: #eef2f8;      /* Cool light */
+  --agent-bubble: #0a84ff;         /* iOS blue (gradient applied via .agent-bubble-grad) */
 
   /* --- Focus (DADS specification) --- */
   --focus-bg: #ffd43d;             /* DADS yellow-300 */
@@ -106,6 +115,20 @@ body {
   font-size: 14px;
   line-height: 1.7;
   letter-spacing: 0.02em;
+}
+
+/* ==========================================================================
+   Mobile: prevent iOS Safari auto-zoom on input focus.
+   iOS zooms in whenever an input/textarea/select has font-size < 16px, which
+   leaves the viewport wider than the device screen and makes the send button
+   scroll off-screen. Forcing 16px on < md keeps the viewport locked.
+   ========================================================================== */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
 }
 
 /* ==========================================================================
@@ -262,6 +285,32 @@ button:active:not(:disabled) {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Long-press reply menu — LINE-style popover entrance (scale + slide up) */
+.reply-menu-pop {
+  transform-origin: var(--reply-menu-origin-x, 50%) var(--reply-menu-origin-y, 100%);
+  animation: replyMenuPop 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+@keyframes replyMenuPop {
+  from {
+    opacity: 0;
+    transform: scale(0.82) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+/* Emphasize the pressed bubble while the menu is open — gives a pseudo-haptic
+   cue on iOS where the Vibration API is unavailable. */
+.reply-bubble-active {
+  animation: replyBubblePress 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+@keyframes replyBubblePress {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.04); }
+  100% { transform: scale(1.02); }
+}
+
 /* Tab content crossfade */
 .tab-fade-enter {
   animation: tabFadeIn 150ms var(--ease-out) both;
@@ -290,6 +339,23 @@ button:active:not(:disabled) {
 }
 
 /* ==========================================================================
+   Viewport height & safe-area utilities (mobile)
+   ========================================================================== */
+.h-dvh { height: 100dvh; }
+.min-h-dvh { min-height: 100dvh; }
+.h-svh { height: 100svh; }
+.min-h-svh { min-height: 100svh; }
+
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pl-safe { padding-left: env(safe-area-inset-left); }
+.pr-safe { padding-right: env(safe-area-inset-right); }
+
+/* Combine with existing padding: py-3 + pb-safe-add -> py-3 + safe inset */
+.pb-safe-add { padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem); }
+.pt-safe-add { padding-top: calc(env(safe-area-inset-top) + 0.75rem); }
+
+/* ==========================================================================
    Scrollbar styling
    ========================================================================== */
 ::-webkit-scrollbar {
@@ -299,9 +365,335 @@ button:active:not(:disabled) {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #b3b3b3;
+  background: #c2cbd8;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #999999;
+  background: #97a3b4;
+}
+
+/* ==========================================================================
+   Liquid Glass — Apple-inspired translucent panels
+   ========================================================================== */
+
+/* Subtle cool gradient canvas for app background */
+.app-canvas {
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(10, 132, 255, 0.10), transparent 60%),
+    radial-gradient(900px 700px at -10% 110%, rgba(48, 213, 200, 0.09), transparent 55%),
+    linear-gradient(180deg, #f5f7fb 0%, #eef3fb 100%);
+}
+
+/* Translucent glass panel */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: saturate(160%) blur(20px);
+  -webkit-backdrop-filter: saturate(160%) blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+/* Lighter glass — for dense dashboards */
+.glass-panel-soft {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: saturate(140%) blur(14px);
+  -webkit-backdrop-filter: saturate(140%) blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+
+/* Agent bubble gradient — iOS Messages-esque blue sweep */
+.agent-bubble-grad {
+  background: linear-gradient(135deg, #409cff 0%, #0a84ff 45%, #0064d0 100%);
+  box-shadow: 0 1px 2px rgba(10, 100, 208, 0.18), 0 4px 10px rgba(10, 132, 255, 0.18);
+}
+
+/* AI suggestion glass surface */
+.ai-glass {
+  background: linear-gradient(
+    135deg,
+    rgba(239, 246, 255, 0.9) 0%,
+    rgba(219, 234, 254, 0.75) 100%
+  );
+  backdrop-filter: saturate(140%) blur(10px);
+  -webkit-backdrop-filter: saturate(140%) blur(10px);
+  border: 1px solid rgba(59, 130, 246, 0.18);
+}
+
+/* ==========================================================================
+   Liquid UI tokens (?ui=liquid path) — ported from sales-ai-liquid (port 3002).
+   Scoped under :root but namespaced with --liquid-glass-* / --liquid-ease-* so
+   they don't shadow classic mockup tokens. Classes below (.liquid-glass-base
+   etc.) are only emitted by components/liquid/* — classic UI never reaches them.
+   ========================================================================== */
+
+:root {
+  --liquid-glass-blur: 28px;
+  --liquid-glass-saturate: 190%;
+  --liquid-glass-brightness: 1.06;
+
+  --liquid-glass-tint-clear: rgba(255, 255, 255, 0.26);
+  --liquid-glass-tint-tinted: rgba(255, 255, 255, 0.66);
+  --liquid-glass-tint-opaque: rgba(255, 255, 255, 0.94);
+
+  --liquid-glass-edge: rgba(15, 23, 42, 0.04);
+  --liquid-glass-rim-top: rgba(255, 255, 255, 1);
+  --liquid-glass-rim-left: rgba(255, 255, 255, 0.55);
+  --liquid-glass-rim-right: rgba(255, 255, 255, 0.2);
+  --liquid-glass-rim-bottom: rgba(15, 23, 42, 0.06);
+
+  --liquid-glass-shadow-soft:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 10px 28px rgba(15, 23, 42, 0.08);
+  --liquid-glass-shadow-strong:
+    0 2px 4px rgba(15, 23, 42, 0.05),
+    0 20px 52px rgba(15, 23, 42, 0.14);
+
+  --liquid-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --liquid-motion: 420ms;
+
+  --liquid-radius-sm: 0.5rem;
+  --liquid-radius-md: 0.875rem;
+  --liquid-radius-lg: 1.25rem;
+  --liquid-radius-xl: 1.75rem;
+  --liquid-radius-capsule: 999px;
+}
+
+/* Material Symbols ligature font (used by GlassCapsule and liquid components). */
+.msym {
+  font-family: 'Material Symbols Rounded', 'Material Symbols Outlined';
+  font-weight: 400;
+  font-style: normal;
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-feature-settings: 'liga';
+  -moz-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+}
+.msym-filled { font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24; }
+.msym-sm { font-size: 16px; }
+.msym-lg { font-size: 22px; }
+
+/* ----- Liquid Glass primitive classes -----
+   Names are kept as `glass-*` (no prefix) to match the liquid component code
+   verbatim and avoid drift. Only liquid components reference them. */
+
+.glass-base {
+  position: relative;
+  isolation: isolate;
+  backdrop-filter: blur(var(--liquid-glass-blur)) saturate(var(--liquid-glass-saturate)) brightness(var(--liquid-glass-brightness));
+  -webkit-backdrop-filter: blur(var(--liquid-glass-blur)) saturate(var(--liquid-glass-saturate)) brightness(var(--liquid-glass-brightness));
+  border: 1px solid var(--liquid-glass-edge);
+  box-shadow:
+    inset 0 1px 0 var(--liquid-glass-rim-top),
+    inset 1px 0 0 var(--liquid-glass-rim-left),
+    inset -1px 0 0 var(--liquid-glass-rim-right),
+    inset 0 -1px 0 var(--liquid-glass-rim-bottom),
+    var(--liquid-glass-shadow-soft);
+  transition:
+    box-shadow var(--liquid-motion) var(--liquid-ease),
+    transform var(--liquid-motion) var(--liquid-ease),
+    backdrop-filter var(--liquid-motion) var(--liquid-ease),
+    -webkit-backdrop-filter var(--liquid-motion) var(--liquid-ease);
+}
+
+.glass-base::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.65) 0%,
+      rgba(255, 255, 255, 0.22) 18%,
+      rgba(255, 255, 255, 0.04) 38%,
+      transparent 55%,
+      transparent 75%,
+      rgba(255, 255, 255, 0.1) 95%,
+      rgba(255, 255, 255, 0.3) 100%
+    );
+  opacity: 1;
+  z-index: 1;
+  transition:
+    opacity var(--liquid-motion) var(--liquid-ease),
+    background-position var(--liquid-motion) var(--liquid-ease);
+  background-size: 140% 140%;
+  background-position: 0% 0%;
+}
+
+.glass-base::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  backdrop-filter: url(#glass-refract);
+  -webkit-backdrop-filter: url(#glass-refract);
+  z-index: 0;
+}
+
+.glass-clear { background: var(--liquid-glass-tint-clear); }
+.glass-tinted {
+  background: var(--liquid-glass-tint-tinted);
+  backdrop-filter: blur(calc(var(--liquid-glass-blur) * 0.7)) saturate(var(--liquid-glass-saturate));
+  -webkit-backdrop-filter: blur(calc(var(--liquid-glass-blur) * 0.7)) saturate(var(--liquid-glass-saturate));
+}
+.glass-opaque {
+  background: var(--liquid-glass-tint-opaque);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.glass-opaque::after { display: none; }
+
+.glass-shape-md { border-radius: var(--liquid-radius-md); }
+.glass-shape-lg { border-radius: var(--liquid-radius-lg); }
+.glass-shape-xl { border-radius: var(--liquid-radius-xl); }
+.glass-shape-capsule { border-radius: var(--liquid-radius-capsule); }
+
+.glass-interactive {
+  cursor: pointer;
+  user-select: none;
+  will-change: transform, box-shadow;
+}
+.glass-interactive:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 var(--liquid-glass-rim-top),
+    inset 1px 0 0 var(--liquid-glass-rim-left),
+    inset -1px 0 0 var(--liquid-glass-rim-right),
+    inset 0 -1px 0 var(--liquid-glass-rim-bottom),
+    var(--liquid-glass-shadow-strong);
+}
+.glass-interactive:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.05),
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 3px 8px rgba(15, 23, 42, 0.05);
+  transition-duration: 140ms;
+}
+
+.glass-content {
+  position: relative;
+  z-index: 2;
+}
+
+@supports not (backdrop-filter: url(#glass-refract)) {
+  .glass-base::after { display: none; }
+  .glass-clear {
+    background: rgba(255, 255, 255, 0.22);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass-clear,
+  .glass-tinted {
+    background: var(--liquid-glass-tint-opaque);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .glass-base::before,
+  .glass-base::after { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-base,
+  .glass-interactive {
+    transition: none;
+  }
+  .glass-interactive:hover,
+  .glass-interactive:active {
+    transform: none;
+  }
+}
+
+/* Liquid app-canvas — applied only when ?ui=liquid wraps the chat slot. */
+.liquid-canvas {
+  background:
+    radial-gradient(820px 680px at 88% -6%, rgba(10, 132, 255, 0.42), transparent 58%),
+    radial-gradient(1000px 820px at -6% 104%, rgba(48, 213, 200, 0.34), transparent 60%),
+    radial-gradient(640px 560px at 14% 18%, rgba(147, 51, 234, 0.22), transparent 58%),
+    radial-gradient(520px 460px at 96% 72%, rgba(255, 99, 164, 0.18), transparent 56%),
+    linear-gradient(180deg, #dbe7fa 0%, #e6edf8 48%, #efe7f8 100%);
+}
+
+@keyframes fadein {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Liquid main surface — used by the active ModeRail tab to extend its glass
+   into the chat area, producing the "folder-tab sticking out" effect from the
+   3002 design. */
+.liquid-main-surface {
+  background: rgba(255, 255, 255, 0.52);
+  backdrop-filter: blur(28px) saturate(185%) brightness(1.04);
+  -webkit-backdrop-filter: blur(28px) saturate(185%) brightness(1.04);
+}
+
+.liquid-header {
+  background: rgba(255, 255, 255, 0.52);
+  backdrop-filter: blur(28px) saturate(185%) brightness(1.04);
+  -webkit-backdrop-filter: blur(28px) saturate(185%) brightness(1.04);
+}
+
+@media (max-width: 1023px) {
+  .liquid-main-surface {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+.mode-tab {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  color: #64748b;
+  width: 100%;
+  padding: 13px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px 0 0 14px;
+  transition:
+    background-color 240ms var(--liquid-ease),
+    color 240ms var(--liquid-ease),
+    box-shadow 240ms var(--liquid-ease),
+    transform 120ms var(--liquid-ease);
+}
+.mode-tab:hover:not([data-selected="true"]) {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.22);
+}
+.mode-tab[data-selected="true"] {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.52);
+  backdrop-filter: blur(28px) saturate(185%) brightness(1.04);
+  -webkit-backdrop-filter: blur(28px) saturate(185%) brightness(1.04);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    inset 1px 0 0 rgba(255, 255, 255, 0.42);
+}
+.mode-tab:active {
+  transform: scale(0.97);
+  transition-duration: 90ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mode-tab { transition: none; }
+  .mode-tab:active { transform: none; }
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import { OBIKAE_BASE_URL } from "@/lib/obikae-launch";
+import { BlockIcon, PaletteIcon } from "./Icons";
 
 export interface ObikaeVacancyInput {
   reinsId: string;
@@ -33,8 +34,12 @@ export interface ObikaeSession {
   vacancies: ObikaeVacancyInput[];
   /** Timestamp of the click that opened this popup (used as identity). */
   startedAt: number;
-  /** Reference to the popup window already opened synchronously from the click. */
-  popup: Window | null;
+  /**
+   * Whether a popup Window was successfully opened. The actual Window handle is
+   * kept in a ref (see Props.popupRef) to avoid React dev-mode serializers
+   * walking into a cross-origin Window and throwing SecurityError.
+   */
+  popupOpen: boolean;
 }
 
 interface Props {
@@ -44,6 +49,8 @@ interface Props {
   onDismiss: () => void;
   /** Re-attempt opening the popup (user gesture from the banner retry button). */
   onReopenPopup: () => void;
+  /** Mutable ref holding the popup Window handle. Kept outside state. */
+  popupRef: RefObject<Window | null>;
 }
 
 const DEFAULT_OBIKAE_URL = OBIKAE_BASE_URL;
@@ -65,6 +72,7 @@ export default function ObikaeLauncher({
   onComplete,
   onDismiss,
   onReopenPopup,
+  popupRef,
 }: Props) {
   const baseUrl = obikaeBaseUrl ?? DEFAULT_OBIKAE_URL;
   const baseOrigin = useMemo(() => {
@@ -75,19 +83,16 @@ export default function ObikaeLauncher({
     }
   }, [baseUrl]);
 
-  const popupRef = useRef<Window | null>(null);
   const closedPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Poll for manual close of the popup. Keep the latest popup ref in sync.
+  // Poll for manual close of the popup window (ref is owned by the parent).
   useEffect(() => {
-    popupRef.current = session?.popup ?? null;
-
     if (closedPollRef.current) {
       clearInterval(closedPollRef.current);
       closedPollRef.current = null;
     }
 
-    if (session?.popup) {
+    if (session?.popupOpen) {
       closedPollRef.current = setInterval(() => {
         if (popupRef.current && popupRef.current.closed) {
           if (closedPollRef.current) {
@@ -106,7 +111,7 @@ export default function ObikaeLauncher({
         closedPollRef.current = null;
       }
     };
-  }, [session, onDismiss]);
+  }, [session?.popupOpen, onDismiss, popupRef]);
 
   // postMessage listener
   useEffect(() => {
@@ -114,15 +119,50 @@ export default function ObikaeLauncher({
       if (event.origin !== baseOrigin) return;
       const data = event.data;
       if (!data || typeof data !== "object") return;
-      if (data.type !== "obikae:done") return;
+      if ((data as { type?: unknown }).type !== "obikae:done") return;
 
-      const payload = data as ObikaeDonePayload & { type: string };
+      // Validate shape rather than trusting the string as-is. `proposeUrl`
+      // gets prefilled into the composer and potentially sent to the
+      // customer, so we reject non-http(s) URLs up-front (defense against a
+      // compromised obikae origin).
+      const p = data as Record<string, unknown>;
+      const sessionId = typeof p.sessionId === 'string' ? p.sessionId : '';
+      const rawUrl = typeof p.proposeUrl === 'string' ? p.proposeUrl : '';
+      const customerName = typeof p.customerName === 'string' ? p.customerName.slice(0, 200) : '';
+      let safeUrl = '';
+      try {
+        const u = new URL(rawUrl);
+        if (u.protocol === 'http:' || u.protocol === 'https:') safeUrl = u.toString();
+      } catch {
+        /* invalid URL — drop */
+      }
+      if (!sessionId || !safeUrl) return;
+
+      const listings = Array.isArray(p.listings)
+        ? p.listings
+            .filter((l) => l && typeof l === 'object')
+            .map((l) => {
+              const o = l as Record<string, unknown>;
+              const title = typeof o.title === 'string' ? o.title.slice(0, 200) : '';
+              const url = typeof o.url === 'string' ? o.url : '';
+              let safeListingUrl = '';
+              try {
+                const u = new URL(url);
+                if (u.protocol === 'http:' || u.protocol === 'https:') safeListingUrl = u.toString();
+              } catch {
+                /* drop */
+              }
+              return title && safeListingUrl ? { title, url: safeListingUrl } : null;
+            })
+            .filter((x): x is { title: string; url: string } => x !== null)
+        : [];
+
       onComplete({
-        sessionId: payload.sessionId,
-        proposeUrl: payload.proposeUrl,
-        customerName: payload.customerName,
-        listings: Array.isArray(payload.listings) ? payload.listings : [],
-        closeRequested: Boolean(payload.closeRequested),
+        sessionId,
+        proposeUrl: safeUrl,
+        customerName,
+        listings,
+        closeRequested: Boolean(p.closeRequested),
       });
 
       if (popupRef.current && !popupRef.current.closed) {
@@ -136,7 +176,7 @@ export default function ObikaeLauncher({
 
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [baseOrigin, onComplete]);
+  }, [baseOrigin, onComplete, popupRef]);
 
   if (!session) return null;
 
@@ -167,13 +207,14 @@ export default function ObikaeLauncher({
     onDismiss();
   };
 
-  const blocked = session.popup == null;
+  const blocked = !session.popupOpen;
 
   if (blocked) {
     return (
       <div className="fixed bottom-6 right-6 z-40 w-[320px] rounded-xl border border-red-200 bg-white shadow-lg p-4">
-        <div className="text-sm font-bold text-red-700 mb-1">
-          🚫 ポップアップがブロックされました
+        <div className="inline-flex items-center gap-1.5 text-sm font-bold text-red-700 mb-1">
+          <BlockIcon className="h-4 w-4" />
+          ポップアップがブロックされました
         </div>
         <p className="text-xs text-text-secondary mb-3 leading-relaxed">
           ブラウザのアドレスバー右側でこのサイトのポップアップを許可してから「再度開く」を押してください。
@@ -201,8 +242,8 @@ export default function ObikaeLauncher({
   return (
     <div className="fixed bottom-6 right-6 z-40 w-[320px] rounded-xl border border-border bg-white shadow-lg p-4">
       <div className="flex items-start gap-3">
-        <div className="h-8 w-8 shrink-0 rounded-full bg-ai-surface flex items-center justify-center text-base">
-          🎨
+        <div className="h-8 w-8 shrink-0 rounded-full bg-ai-surface flex items-center justify-center text-accent">
+          <PaletteIcon className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-bold text-text-primary">

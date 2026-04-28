@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type {
   BukkakuState,
   BukkakuProgress,
@@ -22,7 +22,7 @@ const initialProgress: BukkakuProgress = {
   error: null,
 };
 
-const initialState: BukkakuState = {
+export const initialBukkakuState: BukkakuState = {
   status: "idle",
   progress: initialProgress,
 };
@@ -45,7 +45,7 @@ type Action =
 function reducer(state: BukkakuState, action: Action): BukkakuState {
   switch (action.type) {
     case "connect":
-      return { ...initialState, status: "connecting" };
+      return { ...initialBukkakuState, status: "connecting" };
 
     case "pipeline_start":
       return {
@@ -144,42 +144,132 @@ function reducer(state: BukkakuState, action: Action): BukkakuState {
       return { ...state, status: "cancelled" };
 
     case "reset":
-      return initialState;
+      return initialBukkakuState;
 
     default:
       return state;
   }
 }
 
-export function useBukkaku() {
-  const [state, dispatch] = useReducer(reducer, initialState);
-  const wsRef = useRef<WebSocket | null>(null);
-  const doneRef = useRef(false);
+function parseMessageToAction(msg: {
+  type: string;
+  [key: string]: unknown;
+}): Action | null {
+  switch (msg.type) {
+    case "pipeline_start":
+      return { type: "pipeline_start", totalIds: msg.totalIds as number };
+    case "reins_progress":
+      return {
+        type: "reins_progress",
+        current: msg.current as number,
+        total: msg.total as number,
+        reinsId: msg.reinsId as string,
+      };
+    case "property_fetched":
+      return {
+        type: "property_fetched",
+        property: {
+          property_name: (msg.property_name as string) ?? "",
+          room_number: (msg.room_number as string) ?? "",
+          management_company: (msg.management_company as string) ?? "",
+          management_phone: (msg.management_phone as string) ?? "",
+          address: (msg.address as string) ?? "",
+          rent: (msg.rent as string) ?? "",
+          reins_id: msg.reins_id as string,
+          maisoku_path: (msg.maisoku_path as string | null) ?? null,
+          maisoku_url: (msg.maisoku_url as string | null) ?? null,
+        },
+      };
+    case "reins_error":
+      return { type: "reins_error", reinsId: msg.reinsId as string };
+    case "reins_complete":
+      return { type: "reins_complete" };
+    case "bukaku_progress":
+      return {
+        type: "bukaku_progress",
+        completed: msg.completed as number,
+        total: msg.total as number,
+        found: msg.found as number,
+        remainingSeconds: msg.remainingSeconds as number,
+      };
+    case "bukaku_result":
+      return {
+        type: "bukaku_result",
+        result: {
+          property: msg.property as BukkakuProperty,
+          found: msg.found as boolean,
+          hits: (msg.hits as BukkakuResult["hits"]) || [],
+          results: (msg.results as BukkakuResult["results"]) || [],
+          platformId: (msg.platformId as string) || "",
+          strategy: (msg.strategy as string) || "",
+          needs_manual_check: Boolean(msg.needs_manual_check),
+        },
+      };
+    case "vacancy_found":
+      return {
+        type: "vacancy_found",
+        vacancy: {
+          property: msg.property as BukkakuProperty,
+          platformId: msg.platformId as string,
+          name: msg.name as string,
+          room: msg.room as string,
+        },
+      };
+    case "pipeline_complete":
+      return { type: "pipeline_complete" };
+    case "error":
+      return { type: "error", message: msg.message as string };
+    case "cancelled":
+      return { type: "cancelled" };
+    default:
+      return null;
+  }
+}
 
-  const closeWs = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.onopen = null;
-      wsRef.current.onmessage = null;
-      wsRef.current.onerror = null;
-      wsRef.current.onclose = null;
-      if (
-        wsRef.current.readyState === WebSocket.OPEN ||
-        wsRef.current.readyState === WebSocket.CONNECTING
-      ) {
-        wsRef.current.close();
-      }
-      wsRef.current = null;
+export interface BukkakuStore {
+  states: Record<string, BukkakuState>;
+  getState: (conversationId: string) => BukkakuState;
+  start: (conversationId: string, reinsIds: string[]) => void;
+  cancel: (conversationId: string) => void;
+  reset: (conversationId: string) => void;
+}
+
+export function useBukkakuStore(): BukkakuStore {
+  const [states, setStates] = useState<Record<string, BukkakuState>>({});
+  const wsRef = useRef<Record<string, WebSocket>>({});
+  const doneRef = useRef<Record<string, boolean>>({});
+
+  const dispatch = useCallback((conversationId: string, action: Action) => {
+    setStates((prev) => ({
+      ...prev,
+      [conversationId]: reducer(prev[conversationId] ?? initialBukkakuState, action),
+    }));
+  }, []);
+
+  const closeWs = useCallback((conversationId: string) => {
+    const ws = wsRef.current[conversationId];
+    if (!ws) return;
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
+    if (
+      ws.readyState === WebSocket.OPEN ||
+      ws.readyState === WebSocket.CONNECTING
+    ) {
+      ws.close();
     }
+    delete wsRef.current[conversationId];
   }, []);
 
   const start = useCallback(
-    (reinsIds: string[]) => {
-      closeWs();
-      doneRef.current = false;
-      dispatch({ type: "connect" });
+    (conversationId: string, reinsIds: string[]) => {
+      closeWs(conversationId);
+      doneRef.current[conversationId] = false;
+      dispatch(conversationId, { type: "connect" });
 
       const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
+      wsRef.current[conversationId] = ws;
 
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: "start_reins_bukaku", reinsIds }));
@@ -188,86 +278,19 @@ export function useBukkaku() {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          switch (msg.type) {
-            case "pipeline_start":
-              dispatch({ type: "pipeline_start", totalIds: msg.totalIds });
-              break;
-            case "reins_progress":
-              dispatch({
-                type: "reins_progress",
-                current: msg.current,
-                total: msg.total,
-                reinsId: msg.reinsId,
-              });
-              break;
-            case "property_fetched":
-              dispatch({
-                type: "property_fetched",
-                property: {
-                  property_name: msg.property_name,
-                  room_number: msg.room_number,
-                  management_company: msg.management_company,
-                  address: msg.address,
-                  rent: msg.rent,
-                  reins_id: msg.reins_id,
-                  maisoku_url: msg.maisoku_url,
-                },
-              });
-              break;
-            case "reins_error":
-              dispatch({ type: "reins_error", reinsId: msg.reinsId });
-              break;
-            case "reins_complete":
-              dispatch({ type: "reins_complete" });
-              break;
-            case "bukaku_progress":
-              dispatch({
-                type: "bukaku_progress",
-                completed: msg.completed,
-                total: msg.total,
-                found: msg.found,
-                remainingSeconds: msg.remainingSeconds,
-              });
-              break;
-            case "bukaku_result":
-              dispatch({
-                type: "bukaku_result",
-                result: {
-                  property: msg.property,
-                  found: msg.found,
-                  hits: msg.hits || [],
-                  results: msg.results || [],
-                  platformId: msg.platformId || "",
-                  strategy: msg.strategy || "",
-                },
-              });
-              break;
-            case "vacancy_found":
-              dispatch({
-                type: "vacancy_found",
-                vacancy: {
-                  property: msg.property,
-                  platformId: msg.platformId,
-                  name: msg.name,
-                  room: msg.room,
-                },
-              });
-              break;
-            case "pipeline_complete":
-              doneRef.current = true;
-              dispatch({ type: "pipeline_complete" });
-              closeWs();
-              break;
-            case "error":
-              doneRef.current = true;
-              dispatch({ type: "error", message: msg.message });
-              closeWs();
-              break;
-            case "cancelled":
-              doneRef.current = true;
-              dispatch({ type: "cancelled" });
-              closeWs();
-              break;
+          const action = parseMessageToAction(msg);
+          if (action) {
+            dispatch(conversationId, action);
+          }
+          if (msg.type === "pipeline_complete") {
+            doneRef.current[conversationId] = true;
+            closeWs(conversationId);
+          } else if (msg.type === "error") {
+            doneRef.current[conversationId] = true;
+            closeWs(conversationId);
+          } else if (msg.type === "cancelled") {
+            doneRef.current[conversationId] = true;
+            closeWs(conversationId);
           }
         } catch {
           // ignore parse errors
@@ -275,9 +298,9 @@ export function useBukkaku() {
       };
 
       ws.onerror = () => {
-        if (!doneRef.current) {
-          doneRef.current = true;
-          dispatch({
+        if (!doneRef.current[conversationId]) {
+          doneRef.current[conversationId] = true;
+          dispatch(conversationId, {
             type: "error",
             message:
               "物確サーバーに接続できません。サーバーが起動しているか確認してください。",
@@ -286,34 +309,62 @@ export function useBukkaku() {
       };
 
       ws.onclose = () => {
-        if (!doneRef.current) {
-          doneRef.current = true;
-          dispatch({
+        if (!doneRef.current[conversationId]) {
+          doneRef.current[conversationId] = true;
+          dispatch(conversationId, {
             type: "error",
             message: "物確サーバーとの接続が切れました。",
           });
         }
       };
     },
-    [closeWs]
+    [closeWs, dispatch],
   );
 
-  const cancel = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "cancel_pipeline" }));
+  const cancel = useCallback((conversationId: string) => {
+    const ws = wsRef.current[conversationId];
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "cancel_pipeline" }));
     }
   }, []);
 
-  const reset = useCallback(() => {
-    closeWs();
-    dispatch({ type: "reset" });
-  }, [closeWs]);
+  const reset = useCallback(
+    (conversationId: string) => {
+      closeWs(conversationId);
+      setStates((prev) => {
+        const next = { ...prev };
+        delete next[conversationId];
+        return next;
+      });
+    },
+    [closeWs],
+  );
+
+  const getState = useCallback(
+    (conversationId: string): BukkakuState =>
+      states[conversationId] ?? initialBukkakuState,
+    [states],
+  );
 
   useEffect(() => {
+    const connections = wsRef.current;
     return () => {
-      closeWs();
+      for (const cid of Object.keys(connections)) {
+        const ws = connections[cid];
+        if (
+          ws &&
+          (ws.readyState === WebSocket.OPEN ||
+            ws.readyState === WebSocket.CONNECTING)
+        ) {
+          ws.onopen = null;
+          ws.onmessage = null;
+          ws.onerror = null;
+          ws.onclose = null;
+          ws.close();
+        }
+      }
     };
-  }, [closeWs]);
+  }, []);
 
-  return { state, start, cancel, reset };
+  return { states, getState, start, cancel, reset };
 }

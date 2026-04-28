@@ -1,11 +1,44 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import type { Inquiry } from '@/lib/types';
+
+// Day boundary via useSyncExternalStore — cached snapshot so React doesn't
+// see a new value on every render and warn "The result of getSnapshot should
+// be cached to avoid an infinite loop".
+function computeDayStart(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+let cachedDayMs = 0;
+function subscribeDay(onChange: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  cachedDayMs = computeDayStart();
+  onChange();
+  const id = window.setInterval(() => {
+    const next = computeDayStart();
+    if (next !== cachedDayMs) {
+      cachedDayMs = next;
+      onChange();
+    }
+  }, 60 * 60 * 1000);
+  return () => window.clearInterval(id);
+}
+function getDayStartClient(): number {
+  return cachedDayMs;
+}
+function getDayStartServer(): number {
+  return 0;
+}
 
 interface Props {
   inquiries: Inquiry[];
-  onOpenChat: (customerName: string) => void;
+  /**
+   * Opens the chat for this inquiry. Receives the inquiry `id` — previously
+   * the name was passed, which collapsed two 田中さん rows onto the same chat.
+   */
+  onOpenChat: (inquiryId: string) => void;
 }
 
 function formatDateTime(date: Date): string {
@@ -19,11 +52,13 @@ function formatDateTime(date: Date): string {
 }
 
 export default function InquiryListView({ inquiries, onOpenChat }: Props) {
+  // Day boundary via useSyncExternalStore so the count isn't pinned to
+  // server render time and ticks over at the next midnight.
+  const dayStartMs = useSyncExternalStore(subscribeDay, getDayStartClient, getDayStartServer);
   const todayCount = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return inquiries.filter((inq) => inq.timestamp >= today).length;
-  }, [inquiries]);
+    if (dayStartMs === 0) return 0;
+    return inquiries.filter((inq) => inq.timestamp.getTime() >= dayStartMs).length;
+  }, [inquiries, dayStartMs]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -57,7 +92,7 @@ export default function InquiryListView({ inquiries, onOpenChat }: Props) {
                   <td className="px-4 py-3">
                     <button
                       type="button"
-                      onClick={() => onOpenChat(inq.customerName)}
+                      onClick={() => onOpenChat(inq.id)}
                       className="text-sm font-bold text-text-primary hover:text-accent transition-colors"
                     >
                       {inq.customerName}

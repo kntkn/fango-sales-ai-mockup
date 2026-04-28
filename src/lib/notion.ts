@@ -38,8 +38,13 @@ type AnyProp = Record<string, unknown>;
 function text(prop: AnyProp | undefined): string {
   if (!prop) return '';
   const p = prop as { type?: string; title?: Array<{ plain_text?: string }>; rich_text?: Array<{ plain_text?: string }> };
-  if (p.type === 'title') return p.title?.[0]?.plain_text ?? '';
-  if (p.type === 'rich_text') return p.rich_text?.[0]?.plain_text ?? '';
+  // Notion splits a string into multiple rich_text nodes when mid-string
+  // formatting is applied (bold word, inline link, etc.). Reading only
+  // `[0]` silently truncates the value. Concatenating all nodes preserves
+  // the full string — the price is that inline styling metadata is lost,
+  // which is intentional here: we only want the plain representation.
+  if (p.type === 'title') return (p.title ?? []).map((n) => n.plain_text ?? '').join('');
+  if (p.type === 'rich_text') return (p.rich_text ?? []).map((n) => n.plain_text ?? '').join('');
   return '';
 }
 
@@ -73,8 +78,16 @@ function select(prop: AnyProp | undefined): string | null {
   return p?.select?.name ?? null;
 }
 
-export function mapPageToCustomer(page: AnyProp): NotionCustomer {
-  const pg = page as { id: string; created_time: string; properties: Record<string, AnyProp> };
+export function mapPageToCustomer(page: AnyProp): NotionCustomer | null {
+  const pg = page as {
+    id?: string;
+    created_time?: string;
+    archived?: boolean;
+    properties?: Record<string, AnyProp>;
+  };
+  // Notion returns partial shapes for archived/in-trash pages — bail early so
+  // we don't blow up on a missing `properties` object.
+  if (!pg || !pg.id || !pg.properties) return null;
   const p = pg.properties;
   const pt = select(p['物件種別']);
   return {
@@ -92,7 +105,7 @@ export function mapPageToCustomer(page: AnyProp): NotionCustomer {
     layout: text(p['間取り']),
     rentMan: number(p['賃料(万円)']),
     areaM2: number(p['占有面積(m2)']),
-    createdAt: pg.created_time,
+    createdAt: pg.created_time ?? '',
   };
 }
 
@@ -101,7 +114,9 @@ export async function listCustomers(): Promise<NotionCustomer[]> {
     data_source_id: CUSTOMER_DS_ID,
     page_size: 100,
   });
-  const customers = res.results.map((r) => mapPageToCustomer(r as AnyProp));
+  const customers = res.results
+    .map((r) => mapPageToCustomer(r as AnyProp))
+    .filter((c): c is NotionCustomer => c !== null);
   customers.sort((a, b) => {
     const ta = a.inquiryDate ?? a.createdAt;
     const tb = b.inquiryDate ?? b.createdAt;
@@ -135,19 +150,32 @@ export interface CustomerUpdate {
   areaM2?: number | null;
 }
 
+// Notion rejects any single rich_text / title node over 2000 characters. We
+// chunk eagerly to avoid 400s on long free-text fields like `propertyName`
+// or `location` that users can paste from external sources.
+const NOTION_TEXT_CHUNK = 2000;
+function chunkRichText(content: string): Array<{ text: { content: string } }> {
+  if (!content) return [{ text: { content: '' } }];
+  const out: Array<{ text: { content: string } }> = [];
+  for (let i = 0; i < content.length; i += NOTION_TEXT_CHUNK) {
+    out.push({ text: { content: content.slice(i, i + NOTION_TEXT_CHUNK) } });
+  }
+  return out;
+}
+
 function buildUpdateProperties(u: CustomerUpdate): Record<string, unknown> {
   const props: Record<string, unknown> = {};
-  if (u.name !== undefined) props['氏名'] = { title: [{ text: { content: u.name } }] };
+  if (u.name !== undefined) props['氏名'] = { title: chunkRichText(u.name) };
   if (u.email !== undefined) props['Email'] = { email: u.email || null };
   if (u.phone !== undefined) props['電話番号'] = { phone_number: u.phone || null };
   if (u.inquiryDate !== undefined) props['反響日時'] = u.inquiryDate ? { date: { start: u.inquiryDate } } : { date: null };
-  if (u.propertyName !== undefined) props['物件名'] = { rich_text: [{ text: { content: u.propertyName } }] };
+  if (u.propertyName !== undefined) props['物件名'] = { rich_text: chunkRichText(u.propertyName) };
   if (u.propertyUrl !== undefined) props['物件URL'] = { url: u.propertyUrl || null };
-  if (u.propertyCode !== undefined) props['貴社物件コード'] = { rich_text: [{ text: { content: u.propertyCode } }] };
+  if (u.propertyCode !== undefined) props['貴社物件コード'] = { rich_text: chunkRichText(u.propertyCode) };
   if (u.propertyType !== undefined) props['物件種別'] = u.propertyType ? { select: { name: u.propertyType } } : { select: null };
-  if (u.location !== undefined) props['所在地'] = { rich_text: [{ text: { content: u.location } }] };
-  if (u.station !== undefined) props['最寄り駅'] = { rich_text: [{ text: { content: u.station } }] };
-  if (u.layout !== undefined) props['間取り'] = { rich_text: [{ text: { content: u.layout } }] };
+  if (u.location !== undefined) props['所在地'] = { rich_text: chunkRichText(u.location) };
+  if (u.station !== undefined) props['最寄り駅'] = { rich_text: chunkRichText(u.station) };
+  if (u.layout !== undefined) props['間取り'] = { rich_text: chunkRichText(u.layout) };
   if (u.rentMan !== undefined) props['賃料(万円)'] = { number: u.rentMan };
   if (u.areaM2 !== undefined) props['占有面積(m2)'] = { number: u.areaM2 };
   return props;
@@ -162,9 +190,13 @@ export async function updateCustomer(id: string, u: CustomerUpdate): Promise<Not
 }
 
 export async function createCustomer(u: CustomerUpdate & { name: string }): Promise<NotionCustomer> {
+  const trimmed = u.name.trim();
+  if (!trimmed) throw new Error('name required');
   const page = await notion.pages.create({
     parent: { data_source_id: CUSTOMER_DS_ID },
-    properties: buildUpdateProperties(u) as never,
+    properties: buildUpdateProperties({ ...u, name: trimmed }) as never,
   });
-  return mapPageToCustomer(page as AnyProp);
+  const mapped = mapPageToCustomer(page as AnyProp);
+  if (!mapped) throw new Error('Notion returned an unexpected page shape');
+  return mapped;
 }

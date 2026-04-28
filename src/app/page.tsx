@@ -3,16 +3,29 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { ViewMode, Conversation, Inquiry, CustomerProfile, Message, RecommendState, SmartReply, Property } from '@/lib/types';
 import type { NotionCustomer } from '@/lib/notion';
-import { customerToConversation, customerToInquiry, customerToProfile } from '@/lib/notion-map';
+import { customerToInquiry, customerToProfile } from '@/lib/notion-map';
 import Header from '@/components/Header';
 import ConversationList from '@/components/ConversationList';
 import ChatThread from '@/components/ChatThread';
+import LiquidChatPanel from '@/components/liquid/LiquidChatPanel';
+import LiquidConversationList from '@/components/liquid/LiquidConversationList';
+import LiquidContextPanel from '@/components/liquid/LiquidContextPanel';
+import LiquidModeRail from '@/components/liquid/LiquidModeRail';
+import LiquidHeader from '@/components/liquid/LiquidHeader';
+import LiquidChatLayout from '@/components/liquid/LiquidChatLayout';
+import LiquidCalendarView from '@/components/liquid/LiquidCalendarView';
+import LiquidKanbanView from '@/components/liquid/LiquidKanbanView';
+import LiquidAdView from '@/components/liquid/LiquidAdView';
+import LiquidStaffListView from '@/components/liquid/LiquidStaffListView';
+import { useUiFlag } from '@/lib/use-ui-flag';
 import ContextPanel from '@/components/ContextPanel';
 import CrmView from '@/components/CrmView';
 import InquiryListView from '@/components/InquiryListView';
 import ViewingCalendarView from '@/components/ViewingCalendarView';
 import AgentListView from '@/components/AgentListView';
 import { useAgents } from '@/lib/agent-store';
+import { useConversationStages } from '@/lib/use-conversation-stage';
+import MobileContextSheet from '@/components/MobileContextSheet';
 import ObikaeLauncher, {
   type ObikaeDonePayload,
   type ObikaeSession,
@@ -20,9 +33,10 @@ import ObikaeLauncher, {
 } from '@/components/ObikaeLauncher';
 import { OBIKAE_POPUP_FEATURES, buildObikaeEditorUrl } from '@/lib/obikae-launch';
 import type { BukkakuResult } from '@/lib/types-bukkaku';
+import { useBukkakuStore } from '@/lib/use-bukkaku';
 import { salesAgents, viewingSlots } from '@/lib/mock-data';
 
-type MobilePanel = 'list' | 'chat' | 'context';
+type MobilePanel = 'list' | 'chat';
 
 // NotionCustomer uses ISO strings; after JSON round-trip dates are strings.
 type RawCustomer = Omit<NotionCustomer, never>;
@@ -45,6 +59,15 @@ type StoredLineMessage = {
   direction: 'incoming' | 'outgoing';
   text: string;
   timestamp: string;
+  type?: 'text' | 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'location';
+  attachmentFile?: string;
+  contentType?: string;
+  fileName?: string;
+  fileSize?: number;
+  stickerId?: string;
+  packageId?: string;
+  quoteToken?: string;
+  quotedMessageId?: string;
 };
 
 const LINE_PREFIX = 'line-';
@@ -75,16 +98,45 @@ function lineCustomerToConversation(c: LineCustomer): Conversation {
 }
 
 function lineMessageToMessage(m: StoredLineMessage): Message {
-  return {
+  const base: Message = {
     id: m.id,
     sender: m.direction === 'incoming' ? 'customer' : 'agent',
     text: m.text,
     timestamp: new Date(m.timestamp),
     readStatus: m.direction === 'outgoing' ? 'sent' : undefined,
+    quoteToken: m.quoteToken,
+    quotedMessageId: m.quotedMessageId,
   };
+
+  if (m.type === 'sticker' && m.stickerId) {
+    // LINE's public sticker CDN — no auth required, works directly from the browser.
+    return {
+      ...base,
+      attachment: {
+        kind: 'sticker',
+        url: `https://stickershop.line-scdn.net/stickershop/v1/sticker/${m.stickerId}/android/sticker.png`,
+      },
+    };
+  }
+
+  if (m.type === 'image' || m.type === 'video' || m.type === 'audio' || m.type === 'file') {
+    return {
+      ...base,
+      attachment: {
+        kind: m.type,
+        url: `/api/line/content/${encodeURIComponent(m.id)}`,
+        contentType: m.contentType,
+        fileName: m.fileName,
+        fileSize: m.fileSize,
+      },
+    };
+  }
+
+  return base;
 }
 
 export default function Home() {
+  const uiFlag = useUiFlag();
   const [customers, setCustomers] = useState<RawCustomer[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,15 +149,34 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<ViewMode>('chat');
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('list');
   const [showContextPanel, setShowContextPanel] = useState(false);
+  const [mobileContextOpen, setMobileContextOpen] = useState(false);
+  const [contextInitialTab, setContextInitialTab] = useState<'property' | 'customer'>('property');
 
   const [recommendations, setRecommendations] = useState<Record<string, RecommendState>>({});
   const recommendPollingRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
+  // Multi-conversation bukkaku pipeline state. Each conversation has an
+  // independent WebSocket so switching conversations mid-run keeps all
+  // in-flight pipelines alive and surfaces status in the left panel.
+  const bukkakuStore = useBukkakuStore();
+
+  // Tracks which recommend projectId has already auto-triggered the bukkaku
+  // pipeline for each conversation, so a completed result doesn't re-kick
+  // 物確 every render. Keyed by conversationId → projectId.
+  const autoBukkakuTriggeredRef = useRef<Record<string, string>>({});
+
   // Obikae (帯替え) popup-window session. Includes `startedAt` so the
   // launcher only opens the popup once per click.
+  //
+  // The actual Window handle lives in a ref (obikaePopupRef) — keeping it out
+  // of React state is required because Next.js 16 dev + React 19's component
+  // render logger (logComponentRender → addValueToProperties) recursively
+  // walks state for DevTools and throws SecurityError on cross-origin Window
+  // objects, which crashes the commit phase and freezes the UI.
   const [obikaeSession, setObikaeSession] = useState<
     (ObikaeSession & { conversationId: string }) | null
   >(null);
+  const obikaePopupRef = useRef<Window | null>(null);
 
   // Chat composer prefill (used to auto-insert proposal text after 帯替え)
   const [chatPrefill, setChatPrefill] = useState<{
@@ -200,43 +271,99 @@ export default function Home() {
     };
   }, [selectedLineUserId]);
 
+  const refreshLineMessages = useCallback(async (userId: string) => {
+    try {
+      const r = await fetch(
+        `/api/line/messages/${encodeURIComponent(userId)}`,
+        { cache: 'no-store' },
+      );
+      if (r.ok) {
+        const data = (await r.json()) as { messages: StoredLineMessage[] };
+        setLiveMessages(data.messages.map(lineMessageToMessage));
+      }
+    } catch {
+      /* silent */
+    }
+  }, []);
+
   const sendLineMessage = useCallback(
-    async (text: string) => {
+    async (
+      text: string,
+      reply?: { quoteToken?: string; quotedMessageId: string },
+    ) => {
       if (!selectedLineUserId) return;
       setSendError(null);
-      const res = await fetch(
-        `/api/line/messages/${encodeURIComponent(selectedLineUserId)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        },
-      );
+      let res: Response;
+      try {
+        res = await fetch(
+          `/api/line/messages/${encodeURIComponent(selectedLineUserId)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text,
+              quoteToken: reply?.quoteToken,
+              quotedMessageId: reply?.quotedMessageId,
+            }),
+          },
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'ネットワークエラーで送信できませんでした';
+        setSendError(msg);
+        throw err instanceof Error ? err : new Error(msg);
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setSendError(body.error || `HTTP ${res.status}`);
         throw new Error(body.error || `HTTP ${res.status}`);
       }
-      // Optimistic refresh
-      try {
-        const r = await fetch(
-          `/api/line/messages/${encodeURIComponent(selectedLineUserId)}`,
-          { cache: 'no-store' },
-        );
-        if (r.ok) {
-          const data = (await r.json()) as { messages: StoredLineMessage[] };
-          setLiveMessages(data.messages.map(lineMessageToMessage));
-        }
-      } catch {
-        /* silent */
-      }
+      await refreshLineMessages(selectedLineUserId);
     },
-    [selectedLineUserId],
+    [selectedLineUserId, refreshLineMessages],
   );
 
+  const sendLineImages = useCallback(
+    async (
+      images: Array<{ original: Blob; preview: Blob; fileName: string }>,
+    ) => {
+      if (!selectedLineUserId || images.length === 0) return;
+      setSendError(null);
+      const fd = new FormData();
+      for (const img of images) {
+        fd.append('original', img.original, img.fileName);
+        fd.append('preview', img.preview, `preview-${img.fileName}`);
+      }
+      let res: Response;
+      try {
+        res = await fetch(
+          `/api/line/messages/${encodeURIComponent(selectedLineUserId)}/image`,
+          { method: 'POST', body: fd },
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'ネットワークエラーで送信できませんでした';
+        setSendError(msg);
+        throw err instanceof Error ? err : new Error(msg);
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setSendError(body.error || `HTTP ${res.status}`);
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      await refreshLineMessages(selectedLineUserId);
+    },
+    [selectedLineUserId, refreshLineMessages],
+  );
+
+  const stageOverrides = useConversationStages();
+
   const conversations = useMemo<Conversation[]>(
-    () => lineCustomers.map(lineCustomerToConversation),
-    [lineCustomers],
+    () =>
+      lineCustomers.map((c) => {
+        const base = lineCustomerToConversation(c);
+        const override = stageOverrides[base.id];
+        return override ? { ...base, stage: override } : base;
+      }),
+    [lineCustomers, stageOverrides],
   );
 
   const inquiries = useMemo<Inquiry[]>(
@@ -258,6 +385,24 @@ export default function Home() {
   const selectedCustomer = useMemo(
     () => customers.find((c) => c.id === selectedConversationId) ?? null,
     [customers, selectedConversationId],
+  );
+
+  const selectedAssignedAgentId = useMemo(
+    () => (selectedConversationId ? getAssignedAgentId(selectedConversationId) : null),
+    [selectedConversationId, getAssignedAgentId],
+  );
+
+  const selectedAssignedAgentName = useMemo(() => {
+    if (!selectedAssignedAgentId) return undefined;
+    return agents.find((a) => a.id === selectedAssignedAgentId)?.name;
+  }, [selectedAssignedAgentId, agents]);
+
+  const handleAssignCurrentAgent = useCallback(
+    (agentId: string | null) => {
+      if (!selectedConversationId) return;
+      assignAgent(selectedConversationId, agentId);
+    },
+    [selectedConversationId, assignAgent],
   );
 
   const selectedLineCustomer = useMemo(
@@ -282,6 +427,7 @@ export default function Home() {
     return {
       name: selectedLineCustomer.displayName || 'LINE User',
       lineId: selectedLineCustomer.lineUserId,
+      avatarUrl: selectedLineCustomer.pictureUrl,
       firstContact,
       source: 'LINE',
       sourceProperty: '（未取得）',
@@ -293,11 +439,17 @@ export default function Home() {
     };
   }, [selectedLineCustomer]);
 
-  const customerProfile = isLiveLine
+  const baseCustomerProfile = isLiveLine
     ? liveLineProfile
     : selectedConversationId
       ? (customerProfiles[selectedConversationId] ?? null)
       : null;
+
+  const customerProfile = useMemo<CustomerProfile | null>(() => {
+    if (!baseCustomerProfile || !selectedConversationId) return baseCustomerProfile;
+    const override = stageOverrides[selectedConversationId];
+    return override ? { ...baseCustomerProfile, stage: override } : baseCustomerProfile;
+  }, [baseCustomerProfile, selectedConversationId, stageOverrides]);
 
   const handleSelectConversation = useCallback((id: string) => {
     setSelectedConversationId(id);
@@ -311,23 +463,41 @@ export default function Home() {
   }, []);
 
   const handleInquiryChat = useCallback(
-    (customerName: string) => {
-      const conv = conversations.find((c) => c.customerName === customerName);
+    (inquiryId: string) => {
+      // Inquiry id === conversation id via customerToInquiry; fall back to a
+      // name lookup only if the feed hasn't caught up yet.
+      const conv = conversations.find((c) => c.id === inquiryId);
       if (conv) {
         setSelectedConversationId(conv.id);
         setViewMode('chat');
         setMobilePanel('chat');
-      } else {
-        console.log('LINE誘導:', customerName);
+        return;
+      }
+      const inq = inquiries.find((i) => i.id === inquiryId);
+      if (inq) {
+        const byName = conversations.find((c) => c.customerName === inq.customerName);
+        if (byName) {
+          setSelectedConversationId(byName.id);
+          setViewMode('chat');
+          setMobilePanel('chat');
+          return;
+        }
+        console.log('LINE誘導:', inq.customerName);
       }
     },
-    [conversations],
+    [conversations, inquiries],
   );
 
-  const handleShowContext = useCallback(() => {
-    setMobilePanel('context');
-    setShowContextPanel((v) => !v);
-  }, []);
+  const handleShowContext = useCallback(
+    (tab: 'property' | 'customer' = 'property') => {
+      setContextInitialTab(tab);
+      // On mobile: always open the sheet on the requested tab
+      setMobileContextOpen(true);
+      // On desktop: reveal the right column if hidden; switch tab either way
+      setShowContextPanel(true);
+    },
+    [],
+  );
 
   const handleStartObikae = useCallback(
     (vacancies: BukkakuResult[]) => {
@@ -366,13 +536,14 @@ export default function Home() {
       const popup = url
         ? window.open(url, 'fango-obikae', OBIKAE_POPUP_FEATURES)
         : null;
+      obikaePopupRef.current = popup;
 
       setObikaeSession({
         conversationId: selectedConversation.id,
         customerName,
         vacancies: payload,
         startedAt: Date.now(),
-        popup,
+        popupOpen: popup != null,
       });
     },
     [selectedConversation],
@@ -422,13 +593,15 @@ export default function Home() {
       const popup = url
         ? window.open(url, 'fango-obikae', OBIKAE_POPUP_FEATURES)
         : null;
-      return { ...prev, popup, startedAt: Date.now() };
+      obikaePopupRef.current = popup;
+      return { ...prev, popupOpen: popup != null, startedAt: Date.now() };
     });
   }, []);
 
   const handleCloseContext = useCallback(() => {
     setMobilePanel('chat');
     setShowContextPanel(false);
+    setMobileContextOpen(false);
   }, []);
 
   const renameLineCustomer = useCallback(
@@ -462,7 +635,12 @@ export default function Home() {
   }, []);
 
   const searchRecommendations = useCallback(
-    async (conversationId: string, conversationName: string, msgs: Message[]) => {
+    async (
+      conversationId: string,
+      conversationName: string,
+      msgs: Message[],
+      resultCount?: number,
+    ) => {
       // Call memo is persisted by useCallMemo under `call-memo:{conversationId}`.
       // Include it at the top of the requirements so Fango Recommend's
       // extractor weights agent-written context (area, must-haves) over raw
@@ -502,7 +680,11 @@ export default function Home() {
         const res = await fetch('/api/recommend/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ customerName: conversationName, requirements }),
+          body: JSON.stringify({
+            customerName: conversationName,
+            requirements,
+            ...(typeof resultCount === 'number' ? { resultCount } : {}),
+          }),
         });
         if (!res.ok) throw new Error(`Search failed: ${res.status}`);
         const data = (await res.json()) as { projectId: string };
@@ -545,23 +727,24 @@ export default function Home() {
         recommendPollingRef.current[conversationId] = pollInterval;
 
         setTimeout(() => {
-          if (recommendPollingRef.current[conversationId]) {
-            clearInterval(recommendPollingRef.current[conversationId]);
-            delete recommendPollingRef.current[conversationId];
-            setRecommendations((prev) => {
-              if (prev[conversationId]?.status === 'searching') {
-                return {
-                  ...prev,
-                  [conversationId]: {
-                    ...prev[conversationId],
-                    status: 'error',
-                    error: '検索がタイムアウトしました',
-                  },
-                };
-              }
-              return prev;
-            });
-          }
+          // Only act if *this* poll is still the active one. A newer search
+          // for the same conversation may have replaced the ref; killing its
+          // interval would strand the new search in "searching" forever.
+          if (recommendPollingRef.current[conversationId] !== pollInterval) return;
+          clearInterval(pollInterval);
+          delete recommendPollingRef.current[conversationId];
+          setRecommendations((prev) => {
+            if (prev[conversationId]?.projectId !== projectId) return prev;
+            if (prev[conversationId]?.status !== 'searching') return prev;
+            return {
+              ...prev,
+              [conversationId]: {
+                ...prev[conversationId],
+                status: 'error',
+                error: '検索がタイムアウトしました',
+              },
+            };
+          });
         }, 180_000);
       } catch (err) {
         setRecommendations((prev) => ({
@@ -585,10 +768,36 @@ export default function Home() {
     };
   }, []);
 
+  // Auto-chain: as soon as AI recommendation finishes, push the full result set
+  // into the 物確&AD検索 pipeline. One click ("物件提案を生成") now drives the
+  // whole chain. Guarded per-projectId so re-renders don't re-kick.
+  useEffect(() => {
+    for (const [conversationId, rec] of Object.entries(recommendations)) {
+      if (rec.status !== 'complete' || !rec.projectId) continue;
+      if (rec.results.length === 0) continue;
+      if (autoBukkakuTriggeredRef.current[conversationId] === rec.projectId) continue;
+
+      const bukkakuStatus = bukkakuStore.states[conversationId]?.status;
+      // Don't interrupt a run that's already in flight for this conversation.
+      if (bukkakuStatus && bukkakuStatus !== 'idle' && bukkakuStatus !== 'complete' && bukkakuStatus !== 'error' && bukkakuStatus !== 'cancelled') {
+        continue;
+      }
+
+      autoBukkakuTriggeredRef.current[conversationId] = rec.projectId;
+
+      // New recommend run → clear stale 物確 state before starting.
+      if (bukkakuStatus && bukkakuStatus !== 'idle') {
+        bukkakuStore.reset(conversationId);
+      }
+      const reinsIds = rec.results.map((r) => r.reinsId).filter(Boolean);
+      bukkakuStore.start(conversationId, reinsIds);
+    }
+  }, [recommendations, bukkakuStore]);
+
   const listCls = [mobilePanel === 'list' ? 'flex' : 'hidden', 'md:flex'].join(' ');
   const chatCls = [mobilePanel === 'chat' ? 'flex' : 'hidden', 'md:flex'].join(' ');
   const contextCls = [
-    mobilePanel === 'context' ? 'flex' : 'hidden',
+    'hidden',
     showContextPanel ? 'md:flex' : 'md:hidden',
     'xl:flex',
   ].join(' ');
@@ -609,9 +818,364 @@ export default function Home() {
     );
   }
 
+  const renderChatBody = (opts?: { omitRightColumn?: boolean }) => (
+    <div className="flex flex-1 min-h-0">
+      <div className={`${listCls} w-full ${uiFlag === 'liquid' ? 'md:w-[260px] lg:border-r lg:border-slate-900/[0.06]' : 'md:w-[300px] border-r border-border-light'} shrink-0 overflow-y-auto`}>
+        {uiFlag === 'liquid' ? (
+          <LiquidConversationList
+            conversations={conversations}
+            selectedId={selectedConversationId ?? ''}
+            onSelect={handleSelectConversation}
+          />
+        ) : (
+          <ConversationList
+            conversations={conversations}
+            selectedId={selectedConversationId ?? ''}
+            onSelect={handleSelectConversation}
+            agents={agents}
+            getAssignedAgentId={getAssignedAgentId}
+            onAssignAgent={assignAgent}
+            recommendations={recommendations}
+            bukkakuStates={bukkakuStore.states}
+          />
+        )}
+      </div>
+
+      <div className={`${chatCls} flex-1 min-w-0 overflow-hidden border-r border-border-light`}>
+        {selectedConversation ? (
+          uiFlag === 'liquid' ? (
+            <LiquidChatPanel
+              conversation={selectedConversation}
+              messages={messages}
+              onBack={() => setMobilePanel('list')}
+              onShowContext={handleShowContext}
+              onSend={isLiveLine ? sendLineMessage : undefined}
+              onSendImages={isLiveLine ? sendLineImages : undefined}
+              sendError={isLiveLine ? sendError : null}
+              lineDisplayName={selectedLineCustomer?.displayName}
+              lineAliasName={selectedLineCustomer?.aliasName}
+              onRename={
+                selectedLineUserId
+                  ? (alias) => renameLineCustomer(selectedLineUserId, alias)
+                  : undefined
+              }
+              assignedAgentId={selectedAssignedAgentId}
+              agents={agents}
+              onAssignAgent={handleAssignCurrentAgent}
+            />
+          ) : (
+            <ChatThread
+              conversation={selectedConversation}
+              messages={messages}
+              aiSuggestion={aiSuggestion}
+              smartReplies={smartReplies}
+              onBack={() => setMobilePanel('list')}
+              onShowContext={handleShowContext}
+              onSend={isLiveLine ? sendLineMessage : undefined}
+              onSendImages={isLiveLine ? sendLineImages : undefined}
+              sendError={isLiveLine ? sendError : null}
+              lineDisplayName={selectedLineCustomer?.displayName}
+              lineAliasName={selectedLineCustomer?.aliasName}
+              onRename={
+                selectedLineUserId
+                  ? (alias) => renameLineCustomer(selectedLineUserId, alias)
+                  : undefined
+              }
+              assignedAgentName={selectedAssignedAgentName}
+              assignedAgentId={selectedAssignedAgentId}
+              agents={agents}
+              onAssignAgent={handleAssignCurrentAgent}
+              prefillText={
+                chatPrefill && chatPrefill.conversationId === selectedConversation.id
+                  ? chatPrefill.text
+                  : undefined
+              }
+              prefillNonce={
+                chatPrefill && chatPrefill.conversationId === selectedConversation.id
+                  ? chatPrefill.nonce
+                  : undefined
+              }
+            />
+          )
+        ) : (
+          <div className="flex items-center justify-center h-full text-text-tertiary text-sm">
+            会話がありません
+          </div>
+        )}
+      </div>
+
+      {opts?.omitRightColumn ? null : (
+      <div className={`${contextCls} w-full md:w-[400px] xl:w-[460px] 2xl:w-[500px] shrink-0 overflow-y-auto`}>
+        {selectedConversation && customerProfile ? (
+          uiFlag === 'liquid' ? (
+            <LiquidContextPanel
+              conversation={selectedConversation}
+              customerProfile={customerProfile}
+              properties={properties}
+              personality={personality}
+              suggestedReactions={suggestedReactions}
+              onClose={handleCloseContext}
+              editableCustomer={
+                selectedCustomer
+                  ? {
+                      id: selectedCustomer.id,
+                      email: selectedCustomer.email,
+                      phone: selectedCustomer.phone,
+                    }
+                  : undefined
+              }
+              onSaveContact={handleCustomerUpdate}
+              recommend={recommendations[selectedConversation.id]}
+              hasMessages={messages.length > 0}
+              onSearchRecommend={(count) =>
+                searchRecommendations(selectedConversation.id, selectedConversation.customerName, messages, count)
+              }
+              onStartObikae={handleStartObikae}
+              initialTab={contextInitialTab}
+              bukkakuState={bukkakuStore.states[selectedConversation.id]}
+              onBukkakuCancel={() => bukkakuStore.cancel(selectedConversation.id)}
+              onBukkakuReset={() => bukkakuStore.reset(selectedConversation.id)}
+            />
+          ) : (
+            <ContextPanel
+              conversation={selectedConversation}
+              customerProfile={customerProfile}
+              properties={properties}
+              personality={personality}
+              suggestedReactions={suggestedReactions}
+              onClose={handleCloseContext}
+              editableCustomer={
+                selectedCustomer
+                  ? {
+                      id: selectedCustomer.id,
+                      email: selectedCustomer.email,
+                      phone: selectedCustomer.phone,
+                    }
+                  : undefined
+              }
+              onSaveContact={handleCustomerUpdate}
+              recommend={recommendations[selectedConversation.id]}
+              hasMessages={messages.length > 0}
+              onSearchRecommend={(count) =>
+                searchRecommendations(selectedConversation.id, selectedConversation.customerName, messages, count)
+              }
+              onStartObikae={handleStartObikae}
+              initialTab={contextInitialTab}
+              bukkakuState={bukkakuStore.states[selectedConversation.id]}
+              onBukkakuCancel={() => bukkakuStore.cancel(selectedConversation.id)}
+              onBukkakuReset={() => bukkakuStore.reset(selectedConversation.id)}
+            />
+          )
+        ) : (
+          <div className="flex items-center justify-center h-full text-text-tertiary text-sm">
+            会話を選択してください
+          </div>
+        )}
+      </div>
+      )}
+
+      <MobileContextSheet
+        open={mobileContextOpen}
+        onOpenChange={setMobileContextOpen}
+      >
+        {selectedConversation && customerProfile ? (
+          <ContextPanel
+            conversation={selectedConversation}
+            customerProfile={customerProfile}
+            properties={properties}
+            personality={personality}
+            suggestedReactions={suggestedReactions}
+            onClose={() => setMobileContextOpen(false)}
+            editableCustomer={
+              selectedCustomer
+                ? {
+                    id: selectedCustomer.id,
+                    email: selectedCustomer.email,
+                    phone: selectedCustomer.phone,
+                  }
+                : undefined
+            }
+            onSaveContact={handleCustomerUpdate}
+            recommend={recommendations[selectedConversation.id]}
+            hasMessages={messages.length > 0}
+            onSearchRecommend={(count) =>
+              searchRecommendations(selectedConversation.id, selectedConversation.customerName, messages, count)
+            }
+            onStartObikae={handleStartObikae}
+            initialTab={contextInitialTab}
+            bukkakuState={bukkakuStore.states[selectedConversation.id]}
+            onBukkakuCancel={() => bukkakuStore.cancel(selectedConversation.id)}
+            onBukkakuReset={() => bukkakuStore.reset(selectedConversation.id)}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full text-text-tertiary text-sm">
+            会話を選択してください
+          </div>
+        )}
+      </MobileContextSheet>
+    </div>
+  );
+
+  const renderViewBody = () => (
+    <>
+      {viewMode === 'crm' && (
+        <CrmView
+          conversations={conversations}
+          onSelectConversation={handleCrmSelect}
+          onRenameLine={renameLineCustomer}
+        />
+      )}
+
+      {viewMode === 'calendar' && (
+        <ViewingCalendarView agents={salesAgents} viewingSlots={viewingSlots} />
+      )}
+
+      {viewMode === 'inquiries' && (
+        <InquiryListView inquiries={inquiries} onOpenChat={handleInquiryChat} />
+      )}
+
+      {viewMode === 'agents' && (
+        <AgentListView
+          agents={agents}
+          onAdd={addAgent}
+          onRemove={removeAgent}
+          onRename={renameAgent}
+          onReorder={reorderAgents}
+        />
+      )}
+
+      {viewMode === 'chat' && renderChatBody()}
+    </>
+  );
+
+  if (uiFlag === 'liquid') {
+    const showRight = viewMode === 'chat' && !!selectedConversation && !!customerProfile;
+    return (
+      <div className="liquid-canvas h-full w-full flex flex-col">
+        <LiquidHeader />
+        <div
+          className={[
+            'flex-1 min-h-0 grid grid-cols-1',
+            showRight
+              ? 'lg:grid-cols-[56px_minmax(0,1fr)_400px]'
+              : 'lg:grid-cols-[56px_minmax(0,1fr)]',
+          ].join(' ')}
+        >
+          <LiquidModeRail mode={viewMode} onChange={setViewMode} />
+          <main
+            className={[
+              'liquid-main-surface relative min-h-0 flex flex-col overflow-hidden',
+              showRight ? 'lg:border-r lg:border-slate-900/[0.06]' : '',
+            ].join(' ')}
+          >
+            {viewMode === 'kanban' && (
+              <LiquidKanbanView
+                conversations={conversations}
+                agents={agents}
+                getAssignedAgentId={getAssignedAgentId}
+                onSelectCustomer={(id) => {
+                  handleSelectConversation(id);
+                  setViewMode('chat');
+                }}
+              />
+            )}
+            {viewMode === 'ad' && (
+              <LiquidAdView selectedAdId={null} onSelectAd={() => {}} />
+            )}
+            {viewMode === 'calendar' && (
+              <LiquidCalendarView viewingSlots={viewingSlots} />
+            )}
+            {viewMode === 'staff' && (
+              <LiquidStaffListView
+                agents={agents}
+                conversationsAssignedTo={(agentId) =>
+                  conversations.filter((c) => getAssignedAgentId(c.id) === agentId).length
+                }
+                selectedStaffId={null}
+                onSelectStaff={() => {}}
+                onAddStaff={({ name }) => addAgent(name)}
+              />
+            )}
+            {viewMode === 'chat' && (
+              <LiquidChatLayout
+                mobileTab={mobilePanel === 'list' ? 'inbox' : 'chat'}
+                inbox={
+                  <LiquidConversationList
+                    conversations={conversations}
+                    selectedId={selectedConversationId ?? ''}
+                    onSelect={handleSelectConversation}
+                  />
+                }
+                chat={
+                  selectedConversation ? (
+                    <LiquidChatPanel
+                      conversation={selectedConversation}
+                      messages={messages}
+                      onBack={() => setMobilePanel('list')}
+                      onShowContext={handleShowContext}
+                      onSend={isLiveLine ? sendLineMessage : undefined}
+                      onSendImages={isLiveLine ? sendLineImages : undefined}
+                      sendError={isLiveLine ? sendError : null}
+                      lineDisplayName={selectedLineCustomer?.displayName}
+                      lineAliasName={selectedLineCustomer?.aliasName}
+                      onRename={
+                        selectedLineUserId
+                          ? (alias) => renameLineCustomer(selectedLineUserId, alias)
+                          : undefined
+                      }
+                      assignedAgentId={selectedAssignedAgentId}
+                      agents={agents}
+                      onAssignAgent={handleAssignCurrentAgent}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                      会話を選択してください
+                    </div>
+                  )
+                }
+              />
+            )}
+          </main>
+          {showRight ? (
+            <aside className="hidden lg:flex liquid-main-surface min-h-0 flex-col overflow-hidden">
+              <LiquidContextPanel
+                conversation={selectedConversation!}
+                customerProfile={customerProfile!}
+                properties={properties}
+                personality={personality}
+                suggestedReactions={suggestedReactions}
+                editableCustomer={
+                  selectedCustomer
+                    ? {
+                        id: selectedCustomer.id,
+                        email: selectedCustomer.email,
+                        phone: selectedCustomer.phone,
+                      }
+                    : undefined
+                }
+                onSaveContact={handleCustomerUpdate}
+                recommend={recommendations[selectedConversation!.id]}
+                hasMessages={messages.length > 0}
+                onSearchRecommend={(count) =>
+                  searchRecommendations(selectedConversation!.id, selectedConversation!.customerName, messages, count)
+                }
+                onStartObikae={handleStartObikae}
+                initialTab={contextInitialTab}
+                bukkakuState={bukkakuStore.states[selectedConversation!.id]}
+                onBukkakuCancel={() => bukkakuStore.cancel(selectedConversation!.id)}
+                onBukkakuReset={() => bukkakuStore.reset(selectedConversation!.id)}
+              />
+            </aside>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full app-canvas">
       <Header viewMode={viewMode} onViewModeChange={setViewMode} />
+      {renderViewBody()}
 
       {viewMode === 'crm' && (
         <CrmView
@@ -639,95 +1203,12 @@ export default function Home() {
         />
       )}
 
-      {viewMode === 'chat' && (
-        <div className="flex flex-1 min-h-0">
-          <div className={`${listCls} w-full md:w-[300px] shrink-0 border-r border-border overflow-y-auto`}>
-            <ConversationList
-              conversations={conversations}
-              selectedId={selectedConversationId ?? ''}
-              onSelect={handleSelectConversation}
-              agents={agents}
-              getAssignedAgentId={getAssignedAgentId}
-              onAssignAgent={assignAgent}
-            />
-          </div>
-
-          <div className={`${chatCls} flex-1 min-w-0 overflow-hidden border-r border-border`}>
-            {selectedConversation ? (
-              <ChatThread
-                conversation={selectedConversation}
-                messages={messages}
-                aiSuggestion={aiSuggestion}
-                smartReplies={smartReplies}
-                onBack={() => setMobilePanel('list')}
-                onShowContext={handleShowContext}
-                onSend={isLiveLine ? sendLineMessage : undefined}
-                sendError={isLiveLine ? sendError : null}
-                lineDisplayName={selectedLineCustomer?.displayName}
-                lineAliasName={selectedLineCustomer?.aliasName}
-                onRename={
-                  selectedLineUserId
-                    ? (alias) => renameLineCustomer(selectedLineUserId, alias)
-                    : undefined
-                }
-                prefillText={
-                  chatPrefill && chatPrefill.conversationId === selectedConversation.id
-                    ? chatPrefill.text
-                    : undefined
-                }
-                prefillNonce={
-                  chatPrefill && chatPrefill.conversationId === selectedConversation.id
-                    ? chatPrefill.nonce
-                    : undefined
-                }
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-text-tertiary text-sm">
-                会話がありません
-              </div>
-            )}
-          </div>
-
-          <div className={`${contextCls} w-full md:w-[400px] xl:w-[460px] 2xl:w-[500px] shrink-0 overflow-y-auto`}>
-            {selectedConversation && customerProfile ? (
-              <ContextPanel
-                conversation={selectedConversation}
-                customerProfile={customerProfile}
-                properties={properties}
-                personality={personality}
-                suggestedReactions={suggestedReactions}
-                onClose={handleCloseContext}
-                editableCustomer={
-                  selectedCustomer
-                    ? {
-                        id: selectedCustomer.id,
-                        email: selectedCustomer.email,
-                        phone: selectedCustomer.phone,
-                      }
-                    : undefined
-                }
-                onSaveContact={handleCustomerUpdate}
-                recommend={recommendations[selectedConversation.id]}
-                hasMessages={messages.length > 0}
-                onSearchRecommend={() =>
-                  searchRecommendations(selectedConversation.id, selectedConversation.customerName, messages)
-                }
-                onStartObikae={handleStartObikae}
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-text-tertiary text-sm">
-                会話を選択してください
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       <ObikaeLauncher
         session={obikaeSession}
         onComplete={handleObikaeComplete}
         onDismiss={handleObikaeDismiss}
         onReopenPopup={handleObikaeReopen}
+        popupRef={obikaePopupRef}
       />
     </div>
   );
